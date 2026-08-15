@@ -1,0 +1,23 @@
+/target
+**/*.rs.bk
+*.pdb
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# Training artifacts
+runs/
+data/
+*.safetensors
+*.onnx
+*.npz
+
+# Benchmark output is regenerated, but keep committed results under bench/results/
+bench/scratch/
