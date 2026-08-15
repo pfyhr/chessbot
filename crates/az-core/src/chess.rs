@@ -283,9 +283,30 @@ impl Game for ChessPos {
         }
     }
 
-    fn legal_moves(&self, out: &mut Vec<Self::Move>) {
+    fn expand(&self, out: &mut Vec<Self::Move>) -> Option<Outcome> {
         out.clear();
         out.extend(self.pos.legal_moves().iter().copied());
+
+        // No legal moves means the game is over, and which ending it is depends
+        // only on whether we are in check. Asking `is_checkmate`/`is_stalemate`
+        // here would regenerate the move list we are already holding.
+        if out.is_empty() {
+            return Some(if self.pos.is_check() {
+                Outcome::Loss
+            } else {
+                Outcome::Draw
+            });
+        }
+
+        // These endings have legal moves available and are still terminal.
+        if self.pos.is_insufficient_material()
+            || self.pos.halfmoves() >= 100
+            || self.repetition_count() >= 3
+        {
+            return Some(Outcome::Draw);
+        }
+
+        None
     }
 
     fn play(&mut self, mv: Self::Move) {
@@ -296,21 +317,6 @@ impl Game for ChessPos {
             parent: self.hist.take(),
         };
         self.hist = Some(Arc::new(node));
-    }
-
-    fn outcome(&self) -> Option<Outcome> {
-        if self.pos.is_checkmate() {
-            // The side to move has been mated.
-            return Some(Outcome::Loss);
-        }
-        if self.pos.is_stalemate() || self.pos.is_insufficient_material() {
-            return Some(Outcome::Draw);
-        }
-        // Claimed automatically, as in AlphaZero: no engine declines these.
-        if self.pos.halfmoves() >= 100 || self.repetition_count() >= 3 {
-            return Some(Outcome::Draw);
-        }
-        None
     }
 
     fn policy_index(&self, mv: Self::Move) -> usize {

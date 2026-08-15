@@ -15,6 +15,7 @@ Three goals, in order:
 - [x] **Phase 0** — workspace scaffold, toolchain
 - [x] **Phase 1a** — perft correctness + movegen backend benchmark
 - [x] **Phase 1b** — position/move encoding (4672-move policy), cross-checked vs `python-chess`
+- [ ] Phase 1c — PyO3/maturin bridge (deferred from Phase 0; on Phase 2's critical path)
 - [ ] Phase 2 — Gumbel MCTS + self-play, validated on Connect4
 - [ ] Phase 3 — chess self-play + SE-ResNet training
 - [ ] Phase 4 — UCI binary, time-ladder checkpoints, fastchess/Ordo harness
@@ -51,6 +52,20 @@ Verified two ways, because they catch different things:
 cargo build --release --bin dump
 python3 -m pytest tests/ -v
 ```
+
+## Node cost
+
+`Game::expand` returns the legal moves and the terminal outcome from a single move
+generation. Asking separately costs three movegens per node, because shakmaty's
+`is_checkmate` and `is_stalemate` each regenerate the list internally — measured at
+**1.9x** on the hottest operation in the search:
+
+```
+./target/release/nodecost
+```
+
+It verifies both spellings agree on all 4000 sampled positions before reporting a
+timing, so the fast path cannot quietly become the wrong path.
 
 ## Design notes
 

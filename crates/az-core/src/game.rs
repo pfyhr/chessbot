@@ -69,14 +69,39 @@ pub trait Game: Clone + Send + 'static {
 
     fn player_to_move(&self) -> Player;
 
-    /// Append all legal moves to `out`. Called once per node expansion.
-    fn legal_moves(&self, out: &mut Vec<Self::Move>);
+    /// Fill `out` with the legal moves *and* report whether the game has ended.
+    ///
+    /// These are deliberately one call rather than two. MCTS needs both at every
+    /// node it visits, and asking separately makes the position generate its
+    /// moves more than once: shakmaty's `is_checkmate` and `is_stalemate` each
+    /// run a full move generation internally, so the two-call spelling costs
+    /// three movegens per node where one suffices. Measured at 1.80x on chess --
+    /// see `src/bin/nodecost.rs`.
+    ///
+    /// **A `Some` result means the node is terminal even if `out` is non-empty.**
+    /// A draw by the fifty-move rule or by repetition has legal moves available
+    /// and is still over. Callers must check the outcome before the move list.
+    fn expand(&self, out: &mut Vec<Self::Move>) -> Option<Outcome>;
 
     /// Apply a move that is known to be legal.
     fn play(&mut self, mv: Self::Move);
 
+    /// Legal moves only. Convenience for tests and tooling.
+    ///
+    /// Search code should call [`Game::expand`] instead and use both halves of
+    /// the answer.
+    fn legal_moves(&self, out: &mut Vec<Self::Move>) {
+        self.expand(out);
+    }
+
     /// `Some(outcome)` if the game has ended, from the side-to-move's perspective.
-    fn outcome(&self) -> Option<Outcome>;
+    ///
+    /// Allocates, and throws away the move list it had to build. Convenience for
+    /// tests and tooling; search code should call [`Game::expand`].
+    fn outcome(&self) -> Option<Outcome> {
+        let mut scratch = Vec::new();
+        self.expand(&mut scratch)
+    }
 
     /// Index of `mv` in the flat policy vector. Must be injective over the legal
     /// moves of any single position, and must round-trip with [`Game::move_from_policy_index`].
