@@ -6,3 +6,4 @@ license.workspace = true
 description = "Game abstraction, encodings, Gumbel MCTS and self-play driver"
 
 [dependencies]
+shakmaty = "0.30"

@@ -14,7 +14,7 @@ Three goals, in order:
 
 - [x] **Phase 0** — workspace scaffold, toolchain
 - [x] **Phase 1a** — perft correctness + movegen backend benchmark
-- [ ] Phase 1b — position/move encoding (4672-move policy), bijection tests vs `python-chess`
+- [x] **Phase 1b** — position/move encoding (4672-move policy), cross-checked vs `python-chess`
 - [ ] Phase 2 — Gumbel MCTS + self-play, validated on Connect4
 - [ ] Phase 3 — chess self-play + SE-ResNet training
 - [ ] Phase 4 — UCI binary, time-ladder checkpoints, fastchess/Ordo harness
@@ -26,7 +26,30 @@ Three goals, in order:
 ```
 crates/az-core     game abstraction, encodings, Gumbel MCTS, self-play driver
 crates/az-perft    perft correctness + movegen throughput benchmark
+tests/             cross-language checks against python-chess
 bench/results      committed benchmark results and the decisions they drove
+```
+
+## Encoding
+
+Policy is AlphaZero's 4672 = 73 planes x 64 origin squares, flat index
+`plane * 64 + from_square` — plane-major, matching a `(73, 8, 8)` conv head flattened in
+PyTorch's `(C, H, W)` order. Observations are 119 planes (8 history steps x 14, plus 7
+metadata). Everything is from the mover's perspective; Black's board is mirrored vertically.
+
+Verified two ways, because they catch different things:
+
+- **Rust unit tests** — injectivity and round-trip over a 200-game random walk. These prove
+  the encoding is *a* bijection.
+- **[`tests/test_encoding_vs_python_chess.py`](tests/test_encoding_vs_python_chess.py)** — a
+  second encoder written from the paper's description, checked against the Rust one over
+  **61,547 positions / 1,815,170 moves**. This is what proves it is *AlphaZero's* bijection:
+  a coherently wrong plane layout passes every self-consistency test while training the
+  network against targets that mean nothing.
+
+```
+cargo build --release --bin dump
+python3 -m pytest tests/ -v
 ```
 
 ## Design notes

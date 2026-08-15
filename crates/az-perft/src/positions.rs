@@ -17,7 +17,15 @@ pub const POSITIONS: &[TestPosition] = &[
     TestPosition {
         name: "startpos",
         fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
-        counts: &[20, 400, 8_902, 197_281, 4_865_609, 119_060_324, 3_195_901_860],
+        counts: &[
+            20,
+            400,
+            8_902,
+            197_281,
+            4_865_609,
+            119_060_324,
+            3_195_901_860,
+        ],
     },
     TestPosition {
         // The classic stress test: castling, en passant, promotions, pins all at once.

@@ -172,8 +172,8 @@ fn bench(depth: u32, position: Option<&str>, repeat: u32) {
         CozyChess::VERSION
     );
     println!(
-        "{:<14} {:>5} {:>6} {:>14} {:>9} {:>8}   {}",
-        "position", "depth", "bulk", "nodes", "seconds", "Mnps", "backend"
+        "{:<14} {:>5} {:>6} {:>14} {:>9} {:>8}   backend",
+        "position", "depth", "bulk", "nodes", "seconds", "Mnps"
     );
     println!("{}", "-".repeat(84));
 
@@ -190,7 +190,11 @@ fn bench(depth: u32, position: Option<&str>, repeat: u32) {
             let cozy = time_it::<CozyChess>(pos.fen, depth, bulk, repeat);
 
             for (name, t) in [(Shakmaty::NAME, &shak), (CozyChess::NAME, &cozy)] {
-                let flag = if t.nodes == expected { "" } else { "  <-- WRONG" };
+                let flag = if t.nodes == expected {
+                    ""
+                } else {
+                    "  <-- WRONG"
+                };
                 println!(
                     "{:<14} {:>5} {:>6} {:>14} {:>9.3} {:>8.1}   {}{}",
                     pos.name,

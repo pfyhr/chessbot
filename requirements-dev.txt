@@ -1,0 +1,4 @@
+# Test-side dependencies. python-chess is the independent oracle the Rust rules
+# and encoding are checked against -- it is deliberately never used in a hot path.
+chess>=1.11
+pytest>=9.0
