@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/az-core",
     "crates/az-perft",
+    "crates/az-py",
 ]
 
 [workspace.package]

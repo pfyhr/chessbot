@@ -15,7 +15,7 @@ Three goals, in order:
 - [x] **Phase 0** — workspace scaffold, toolchain
 - [x] **Phase 1a** — perft correctness + movegen backend benchmark
 - [x] **Phase 1b** — position/move encoding (4672-move policy), cross-checked vs `python-chess`
-- [ ] Phase 1c — PyO3/maturin bridge (deferred from Phase 0; on Phase 2's critical path)
+- [x] **Phase 1c** — PyO3/maturin bridge, measured against a network forward
 - [ ] Phase 2 — Gumbel MCTS + self-play, validated on Connect4
 - [ ] Phase 3 — chess self-play + SE-ResNet training
 - [ ] Phase 4 — UCI binary, time-ladder checkpoints, fastchess/Ordo harness
@@ -67,6 +67,21 @@ generation. Asking separately costs three movegens per node, because shakmaty's
 It verifies both spellings agree on all 4000 sampled positions before reporting a
 timing, so the fast path cannot quietly become the wrong path.
 
+## Bridge cost
+
+```
+.venv/bin/python bench/bridge_throughput.py
+```
+
+The boundary costs **0.0–2.5%** of encode-plus-forward — it is not the bottleneck, and the
+once-per-batch design has room to spare. See
+[`bench/results/2026-08-16-bridge-throughput.md`](bench/results/2026-08-16-bridge-throughput.md).
+
+The number that shapes Phase 2 is the other one: MPS has a ~2 ms fixed cost per call, so a
+batch of 1 gets 482 positions/sec against 24,411 at batch 512 — **50x from batching alone**.
+Self-play has to run ~128 games concurrently and pool their leaf evaluations, or the GPU
+sits 98% idle.
+
 ## Design notes
 
 **Inverted control flow.** Python drives the training loop, but Rust owns every board and
@@ -91,15 +106,25 @@ where a subtly wrong training target is indistinguishable from slow learning for
 
 ## Building
 
-Requires a Rust toolchain (`rustup`) and Python 3.14 with PyTorch.
+Requires a Rust toolchain (`rustup`) and Python 3.11+.
 
 ```
+python3 -m venv .venv
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/maturin develop --release     # builds the Rust core into the venv
+
 cargo build --release
 cargo test --release
+.venv/bin/python -m pytest tests/ -v
 ```
 
-Always benchmark in release. Debug builds are 20–50x slower and any timing from one is
-meaningless.
+Always build in release. Debug builds are 20–50x slower and any timing from one is
+meaningless — which is why `[tool.maturin] profile = "release"` is set even for
+`maturin develop`.
+
+The `extension-module` feature is off by default and enabled only by maturin. With it
+always on, `cargo test` builds a standalone binary whose Python symbols resolve to nothing
+and it aborts at startup.
 
 ## Perft
 

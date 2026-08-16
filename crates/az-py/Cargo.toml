@@ -1,0 +1,27 @@
+[package]
+name = "az-py"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Python bindings for the AlphaZero core"
+
+[lib]
+name = "chessbot_core"
+# cdylib for the Python extension module; rlib so `cargo test` can still see it.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+az-core = { path = "../az-core" }
+shakmaty = "0.30"
+pyo3 = { version = "0.29" }
+numpy = "0.29"
+# Must match the ndarray the `numpy` crate binds against, or the ArrayBase types
+# are unrelated and IntoPyArray simply is not implemented for ours.
+ndarray = "0.17"
+
+[features]
+# Enabled by maturin when building the wheel. Off by default so `cargo test` and
+# `cargo build` link against libpython normally -- with it always on, the test
+# harness builds a standalone binary whose Python symbols resolve to nothing and
+# it aborts at startup.
+extension-module = ["pyo3/extension-module"]

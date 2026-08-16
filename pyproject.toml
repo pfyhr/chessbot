@@ -1,0 +1,22 @@
+[build-system]
+requires = ["maturin>=1.9,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "chessbot-core"
+description = "Rust core for an AlphaZero-style chess engine"
+requires-python = ">=3.11"
+classifiers = ["Programming Language :: Rust"]
+dynamic = ["version"]
+dependencies = ["numpy>=2.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=9.0", "chess>=1.11"]
+
+[tool.maturin]
+manifest-path = "crates/az-py/Cargo.toml"
+module-name = "chessbot_core"
+features = ["extension-module"]
+# Build in release even for `maturin develop`: a debug-build core is 20-50x
+# slower and would make every throughput number meaningless.
+profile = "release"
