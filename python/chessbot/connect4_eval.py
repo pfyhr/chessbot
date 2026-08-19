@@ -185,7 +185,7 @@ def play_match(
             else:
                 net = net_a if is_a else net_b
                 picks = (
-                    _search_moves(net, positions, device, sims, int(rng.integers(1 << 30)))
+                    search_moves(net, positions, device, sims, int(rng.integers(1 << 30)))
                     if sims > 0
                     else greedy_moves(net, positions, device)
                 )
@@ -218,7 +218,7 @@ def play_match(
     }
 
 
-def _search_moves(net, positions, device, sims, seed) -> list[int]:
+def search_moves(net, positions, device, sims, seed) -> list[int]:
     search = cc.Connect4Search(positions, sims=sims, max_considered=7, seed=seed)
     while (obs := search.next_batch()) is not None:
         with torch.no_grad():

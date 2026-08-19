@@ -846,7 +846,11 @@ mod tests {
     fn the_target_stays_a_distribution_not_a_one_hot() {
         // Values that differ sharply by position, so Q spans a wide range.
         fn spread(pos: &Connect4) -> (Vec<f32>, f32) {
-            let v = if pos.plies().is_multiple_of(2) { 0.9 } else { -0.9 };
+            let v = if pos.plies().is_multiple_of(2) {
+                0.9
+            } else {
+                -0.9
+            };
             (vec![0.0; 7], v)
         }
 

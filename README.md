@@ -55,6 +55,26 @@ Match play randomises openings. Greedy policy play is deterministic, so without 
 a 200-game match is two distinct games repeated 100 times, and the score it reports is
 noise dressed as data.
 
+### Result
+
+40 generations, 10,240 games, **14 minutes** on an M2 Max
+([full report](bench/results/2026-08-19-connect4-loop.md)):
+
+| metric | gen 0 | gen 39 |
+|---|---:|---:|
+| tactics, raw policy | 0.295 | **0.583** |
+| tactics, with search @32 | 0.605 | **0.750** |
+| centre preference | 0.193 | **0.999** |
+| vs random | 0.718 | **0.975** |
+
+Last against first over 400 games: **395W–5L on raw policy** (+759 Elo), 357W–43L
+with search (+368 Elo). The searched margin is narrower because search partly
+compensates for a weak policy — that is the honest number for how much better the
+*engine* got, while the raw margin is how much better the *network* got.
+
+The centre figure is the one worth trusting most: Connect4 is solved and the first
+player wins only by taking the middle, and nothing in the loop is told that.
+
 ## Encoding
 
 Policy is AlphaZero's 4672 = 73 planes x 64 origin squares, flat index
