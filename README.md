@@ -16,7 +16,7 @@ Three goals, in order:
 - [x] **Phase 1a** — perft correctness + movegen backend benchmark
 - [x] **Phase 1b** — position/move encoding (4672-move policy), cross-checked vs `python-chess`
 - [x] **Phase 1c** — PyO3/maturin bridge, measured against a network forward
-- [ ] Phase 2 — Gumbel MCTS + self-play, validated on Connect4
+- [x] **Phase 2** — Gumbel MCTS + batched self-play, validated on Connect4
 - [ ] Phase 3 — chess self-play + SE-ResNet training
 - [ ] Phase 4 — UCI binary, time-ladder checkpoints, fastchess/Ordo harness
 - [ ] Phase 5 — performance engineering
@@ -27,9 +27,33 @@ Three goals, in order:
 ```
 crates/az-core     game abstraction, encodings, Gumbel MCTS, self-play driver
 crates/az-perft    perft correctness + movegen throughput benchmark
+crates/az-py       PyO3 bindings -> the `chessbot_core` Python module
+python/chessbot    network, training loop, evaluation gates
 tests/             cross-language checks against python-chess
 bench/results      committed benchmark results and the decisions they drove
 ```
+
+## Running the Connect4 loop
+
+Connect4 is not a side quest — it is the gate. A correct RL loop converges here in
+minutes, so a wrong one is *loud* instead of looking like "chess is slow to learn".
+
+```
+PYTHONPATH=python .venv/bin/python -m chessbot.train_connect4 --generations 40
+```
+
+Four gates, ordered by how much they tell you:
+
+| gate | what it proves |
+|---|---|
+| **tactics** | positions with a forced win or forced block, generated from real play and checked against exact ground truth — cannot be gamed by a degenerate policy |
+| **centre** | Connect4 is solved and the first player wins only by taking the middle; nothing in the loop is told this |
+| **vs-random** | the floor — anything that learned at all clears it |
+| **vs-prev** | is generation N actually better than N-1 |
+
+Match play randomises openings. Greedy policy play is deterministic, so without that
+a 200-game match is two distinct games repeated 100 times, and the score it reports is
+noise dressed as data.
 
 ## Encoding
 
@@ -88,21 +112,32 @@ sits 98% idle.
 search tree. The FFI boundary is crossed once per neural-net batch, never per node:
 
 ```python
-gen = chessbot_core.SelfPlay(games=256, sims=32)
-while not gen.done():
-    obs = gen.next_batch()        # Rust steps all games until N leaves need eval
-    p, wdl, mlh = net(obs)        # PyTorch on MPS
-    gen.submit(p, wdl, mlh)       # Rust expands, applies virtual loss, continues
+sp = chessbot_core.Connect4SelfPlay(concurrency=256, total_games=256, sims=32)
+while (obs := sp.next_batch()) is not None:   # Rust steps every game to its next leaf
+    logits, wdl = net(obs)                    # PyTorch on MPS, one forward
+    sp.submit(logits, wdl_to_scalar(wdl))     # Rust expands, backs up, advances
+obs, policy, z = sp.take_training_data()
 ```
+
+**One leaf per tree, many trees.** Because Gumbel runs at a small simulation budget, each
+tree only needs one leaf evaluated per pass — so concurrency comes from the number of games,
+not from forcing one tree to yield several leaves. That removes virtual loss from the design
+entirely. Batch size is simply the live game count.
 
 **Gumbel AlphaZero**, not vanilla PUCT. Root Gumbel-top-k plus sequential halving, with the
 completed-Q improved policy as the training target. It keeps learning at very low simulation
 budgets, so we run 32 sims instead of 800 — roughly a 25x throughput multiplier, and the
 difference between this working on one machine and not.
 
-**Generic over a `Game` trait**, with Connect4 alongside Chess. Connect4 converges to
-near-perfect play in an afternoon, giving a hard pass/fail on the RL loop before chess —
-where a subtly wrong training target is indistinguishable from slow learning for weeks.
+The sigma transform has two details that are easy to miss and fatal to skip: completed-Q
+values are **min-max rescaled to [0, 1]** and scaled by **0.1**, not 1.0. With raw Q in
+[-1, 1] and a unit scale the term reaches ~60 against O(1) logits, so the improved policy
+collapses onto argmax-Q and discards the network's prior. The symptom is subtle — the loop
+still trains, just badly.
+
+**Generic over a `Game` trait**, with Connect4 alongside Chess. Connect4 converges in
+minutes, giving a hard pass/fail on the RL loop before chess — where a subtly wrong training
+target is indistinguishable from slow learning for weeks.
 
 ## Building
 

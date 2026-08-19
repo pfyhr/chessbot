@@ -46,6 +46,11 @@ pub struct Config {
     /// How many root actions to consider (`m`). Clamped to the legal count.
     pub max_considered: usize,
     /// Scale constants for the sigma transform.
+    ///
+    /// `c_scale` is 0.1, not 1.0, and it is applied to completed-Q values that
+    /// have been rescaled to [0, 1]. Both details matter: with raw Q in [-1, 1]
+    /// and a unit scale, sigma reaches ~60 while the logits are O(1), so the
+    /// improved policy collapses onto argmax-Q and throws the prior away.
     pub c_visit: f32,
     pub c_scale: f32,
 }
@@ -56,7 +61,7 @@ impl Default for Config {
             sims: 32,
             max_considered: 16,
             c_visit: 50.0,
-            c_scale: 1.0,
+            c_scale: 0.1,
         }
     }
 }
@@ -337,11 +342,16 @@ impl<G: Game> Search<G> {
         self.gumbel[self.nodes[0].pos.policy_index(e.mv)] + e.logit
     }
 
-    /// `g(a) + logit(a) + sigma(q(a))`, the ranking used for halving and for the
-    /// final choice.
-    fn root_score(&self, edge: usize) -> f32 {
-        let q = self.nodes[0].edges[edge].q().unwrap_or(0.0);
-        self.root_gumbel_score(edge) + self.sigma(0, q)
+    /// `g(a) + logit(a) + sigma(q(a))` for every root edge, the ranking used for
+    /// sequential halving and for the final choice.
+    ///
+    /// Computed for all edges at once because the sigma transform rescales
+    /// across the node, so an edge's score is not a function of that edge alone.
+    fn root_scores(&self) -> Vec<f32> {
+        let sigma = self.sigma_completed(0);
+        (0..self.nodes[0].edges.len())
+            .map(|i| self.root_gumbel_score(i) + sigma[i])
+            .collect()
     }
 
     fn begin_phase(&mut self) {
@@ -374,10 +384,11 @@ impl<G: Game> Search<G> {
 
     /// Drop the worse half of the contenders and start the next phase.
     fn halve(&mut self) {
+        let scores = self.root_scores();
         let mut ranked = std::mem::take(&mut self.contenders);
         ranked.sort_by(|&a, &b| {
-            self.root_score(b)
-                .partial_cmp(&self.root_score(a))
+            scores[b]
+                .partial_cmp(&scores[a])
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         let keep = ranked.len().div_ceil(2).max(1);
@@ -413,18 +424,32 @@ impl<G: Game> Search<G> {
 
     // --- the completed-Q machinery ------------------------------------------
 
-    /// `sigma(q) = (c_visit + max_visits) * c_scale * q`
+    /// The sigma-transformed completed Q value for every edge of `node`.
     ///
-    /// The visit-count scaling is what keeps the Q term commensurate with the
-    /// logits as the search deepens.
-    fn sigma(&self, node: u32, q: f32) -> f32 {
-        let max_visits = self.nodes[node as usize]
-            .edges
-            .iter()
-            .map(|e| e.visits)
-            .max()
-            .unwrap_or(0);
-        (self.cfg.c_visit + max_visits as f32) * self.cfg.c_scale * q
+    /// Three things happen here, and all three are load-bearing:
+    ///
+    /// 1. **Completion** -- edges the search never visited take `v_mix` rather
+    ///    than the raw network value, so they are judged against what the search
+    ///    has since learned.
+    /// 2. **Rescaling** to [0, 1] across the node's edges. Without this the term
+    ///    below dwarfs the logits and the improved policy degenerates to a
+    ///    one-hot on argmax-Q.
+    /// 3. **Visit scaling** -- `(c_visit + max_visits) * c_scale`, so the search
+    ///    signal grows relative to the prior as evidence accumulates.
+    fn sigma_completed(&self, node: u32) -> Vec<f32> {
+        let priors = self.priors(node);
+        let fallback = self.v_mix(node, &priors);
+        let n = &self.nodes[node as usize];
+
+        let mut q: Vec<f32> = n.edges.iter().map(|e| e.q().unwrap_or(fallback)).collect();
+        rescale_unit(&mut q);
+
+        let max_visits = n.edges.iter().map(|e| e.visits).max().unwrap_or(0);
+        let scale = (self.cfg.c_visit + max_visits as f32) * self.cfg.c_scale;
+        for v in &mut q {
+            *v *= scale;
+        }
+        q
     }
 
     /// The value estimate used for actions the search never tried.
@@ -456,14 +481,12 @@ impl<G: Game> Search<G> {
 
     /// `pi' = softmax(logits + sigma(completedQ))`.
     fn improved_policy(&self, node: u32) -> Vec<f32> {
-        let priors = self.priors(node);
-        let fallback = self.v_mix(node, &priors);
-        let n = &self.nodes[node as usize];
-
-        let scored: Vec<f32> = n
+        let sigma = self.sigma_completed(node);
+        let scored: Vec<f32> = self.nodes[node as usize]
             .edges
             .iter()
-            .map(|e| e.logit + self.sigma(node, e.q().unwrap_or(fallback)))
+            .zip(&sigma)
+            .map(|(e, &s)| e.logit + s)
             .collect();
         softmax(&scored)
     }
@@ -488,12 +511,13 @@ impl<G: Game> Search<G> {
         let root = &self.nodes[0];
         assert!(root.expanded, "search never ran");
 
+        let scores = self.root_scores();
         let best = *self
             .contenders
             .iter()
             .max_by(|&&a, &&b| {
-                self.root_score(a)
-                    .partial_cmp(&self.root_score(b))
+                scores[a]
+                    .partial_cmp(&scores[b])
                     .unwrap_or(std::cmp::Ordering::Equal)
             })
             .expect("root has at least one legal move");
@@ -518,6 +542,23 @@ impl<G: Game> Search<G> {
 
     pub fn nodes_allocated(&self) -> usize {
         self.nodes.len()
+    }
+}
+
+/// Min-max rescale to [0, 1] in place.
+///
+/// When every value is equal there is no preference to express, so the result is
+/// flat zeros rather than an arbitrary spread.
+fn rescale_unit(xs: &mut [f32]) {
+    let min = xs.iter().copied().fold(f32::INFINITY, f32::min);
+    let max = xs.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    let range = max - min;
+    if range > 1e-8 {
+        for x in xs.iter_mut() {
+            *x = (*x - min) / range;
+        }
+    } else {
+        xs.fill(0.0);
     }
 }
 
@@ -748,6 +789,81 @@ mod tests {
         // Mean of Gumbel(0,1) is Euler-Mascheroni, ~0.5772.
         let mean = sum / n as f64;
         assert!((mean - 0.5772).abs() < 0.02, "mean was {mean}");
+    }
+
+    #[test]
+    fn rescale_maps_to_the_unit_interval() {
+        let mut v = vec![-1.0, 0.0, 1.0];
+        rescale_unit(&mut v);
+        assert_eq!(v, vec![0.0, 0.5, 1.0]);
+
+        // All equal means no preference to express, not an arbitrary spread.
+        let mut flat = vec![0.7, 0.7, 0.7];
+        rescale_unit(&mut flat);
+        assert_eq!(flat, vec![0.0, 0.0, 0.0]);
+
+        let mut one = vec![3.0];
+        rescale_unit(&mut one);
+        assert_eq!(one, vec![0.0]);
+    }
+
+    /// When search has learned nothing, the improved policy must be the prior.
+    ///
+    /// This is the invariant that the sigma transform broke: with raw Q values
+    /// and a unit scale, the term reached ~60 against O(1) logits and the target
+    /// collapsed onto argmax-Q, discarding the network's policy entirely.
+    #[test]
+    fn an_uninformative_search_returns_the_prior() {
+        // Strongly peaked prior on column 5, and a value function that says
+        // nothing at all.
+        fn peaked(_pos: &Connect4) -> (Vec<f32>, f32) {
+            let mut logits = vec![0.0; 7];
+            logits[5] = 3.0;
+            (logits, 0.0)
+        }
+
+        let cfg = Config {
+            sims: 32,
+            max_considered: 7,
+            ..Config::default()
+        };
+        let s = run(Connect4::new(), cfg, 4, peaked);
+        let (_, target) = s.result();
+
+        // softmax([0,0,0,0,0,3,0]) puts ~0.71 on column 5.
+        let expected = 3.0f32.exp() / (3.0f32.exp() + 6.0);
+        assert!(
+            (target[5] - expected).abs() < 0.05,
+            "prior was distorted: {:.3} vs expected {:.3}",
+            target[5],
+            expected
+        );
+    }
+
+    /// With a uniform prior and a wide spread of Q values, the target should be
+    /// peaked but not degenerate -- the sigma term is bounded by construction.
+    #[test]
+    fn the_target_stays_a_distribution_not_a_one_hot() {
+        // Values that differ sharply by position, so Q spans a wide range.
+        fn spread(pos: &Connect4) -> (Vec<f32>, f32) {
+            let v = if pos.plies().is_multiple_of(2) { 0.9 } else { -0.9 };
+            (vec![0.0; 7], v)
+        }
+
+        let cfg = Config {
+            sims: 32,
+            max_considered: 7,
+            ..Config::default()
+        };
+        let s = run(Connect4::new(), cfg, 9, spread);
+        let (_, target) = s.result();
+        let max = target.iter().copied().fold(0.0f32, f32::max);
+        assert!(
+            max < 0.999,
+            "target collapsed to a one-hot ({max:.4}); sigma is unbounded again"
+        );
+        let sum: f32 = target.iter().sum();
+        assert!((sum - 1.0).abs() < 1e-4);
     }
 
     #[test]
