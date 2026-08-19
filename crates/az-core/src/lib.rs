@@ -7,7 +7,11 @@
 //! target is indistinguishable from slow learning for weeks.
 
 pub mod chess;
+pub mod connect4;
 pub mod game;
+pub mod mcts;
+pub mod selfplay;
 
 pub use chess::ChessPos;
+pub use connect4::Connect4;
 pub use game::{Game, Outcome, Player};
