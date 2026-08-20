@@ -141,6 +141,24 @@ batch of 1 gets 482 positions/sec against 24,411 at batch 512 — **50x from bat
 Self-play has to run ~128 games concurrently and pool their leaf evaluations, or the GPU
 sits 98% idle.
 
+## Compute budget
+
+AlphaZero used 5,000 TPUs for nine hours. Measured against that
+([details](bench/results/2026-08-20-compute-budget.md)):
+
+| | games/sec | 44M games |
+|---|---:|---:|
+| AlphaZero, all 5,000 TPUs | 1,358 | 9 hours |
+| AlphaZero, one TPU | 0.272 | 5.1 years |
+| M2 Max, AlphaZero settings | 0.020 | 68.8 years |
+| M2 Max, our settings | 5.50 | **93 days** |
+
+The per-chip gap is **13.4x**, not 66,898x — almost the entire deficit is parallelism,
+not silicon. And **271x** is already recovered by algorithm choice on the same machine:
+25x from Gumbel running 32 simulations instead of 800, 10.9x from sizing the net to the
+hardware. At ~20,000 games/hour a week of self-play is 3.3M games, so the open question
+is games-to-target, not games-per-hour.
+
 ## Design notes
 
 **Inverted control flow.** Python drives the training loop, but Rust owns every board and

@@ -721,19 +721,85 @@ after    tactics 0.347   centre <b>0.399</b>   vs-prev <b>0.740</b></pre>
   </section>
 
   <section>
-    <div class="sec-head"><span class="eyebrow">07</span><h2>What is not claimed</h2></div>
+    <div class="sec-head"><span class="eyebrow">07</span><h2>How far is one laptop from 5,000 TPUs?</h2></div>
     <div class="col stack">
       <p>
-        Tactical accuracy tops out at 0.583 on raw policy and 0.750 with search — not 1.0.
-        Those are genuine misses against exact ground truth on positions with a forced win or
-        a forced block. A 496k-parameter network at 32 simulations does not master Connect4 in
-        fourteen minutes.
+        AlphaZero played 44 million games in nine hours on 5,000 TPUs. That number is
+        usually quoted to make a single machine sound hopeless. It is worth doing the
+        arithmetic instead — and measuring rather than extrapolating, so the AlphaZero
+        network was run on this M2 Max directly.
+      </p>
+    </div>
+
+    <div class="row" style="margin-top:18px; align-items:stretch">
+      <div class="panel" style="flex:1 1 340px">
+        <div class="panel-bar"><span class="eyebrow">Measured &middot; 19&times;256 net, 33.5M params</span></div>
+        <div class="panel-body table-scroll">
+          <table>
+            <thead><tr><th></th><th>games&#8202;/&#8202;sec</th><th>44M games</th></tr></thead>
+            <tbody>
+              <tr><td>AlphaZero, all 5,000 TPUs</td><td class="win">1,358</td><td class="win">9 hours</td></tr>
+              <tr><td>AlphaZero, one TPU</td><td>0.272</td><td>5.1 years</td></tr>
+              <tr><td>M2 Max, same settings</td><td>0.020</td><td>68.8 years</td></tr>
+              <tr><td>M2 Max, our settings</td><td class="win">5.50</td><td class="win">93 days</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel" style="flex:1 1 260px">
+        <div class="panel-bar"><span class="eyebrow">The gap, decomposed</span></div>
+        <div class="panel-body">
+          <div class="eyebrow">Per chip</div>
+          <span class="fig" style="font-size:1.5rem;font-weight:600;display:block;margin:5px 0 1px">13.4&times;</span>
+          <small class="muted">M2 Max vs one 2016 TPU</small>
+
+          <div class="eyebrow" style="margin-top:14px">In total</div>
+          <span class="fig" style="font-size:1.5rem;font-weight:600;display:block;margin:5px 0 1px">66,898&times;</span>
+          <small class="muted">because they had five thousand of them</small>
+
+          <div class="eyebrow" style="margin-top:14px">Already recovered</div>
+          <span class="fig" style="font-size:1.5rem;font-weight:600;display:block;margin:5px 0 1px;color:var(--good)">271&times;</span>
+          <small class="muted">25&times; from Gumbel's 32 sims, 10.9&times; from a smaller net</small>
+        </div>
+      </div>
+    </div>
+
+    <div class="col stack" style="margin-top:18px">
+      <p>
+        <strong>The per-chip gap is 13&times;, not 67,000&times;.</strong> One consumer laptop
+        is within about an order of magnitude of a single first-generation TPU for this
+        workload. Essentially the entire deficit is parallelism — hardware they had five
+        thousand of and we have one of — rather than anything about the silicon.
       </p>
       <p>
-        The gate for this phase was <em>the loop learns</em>, not <em>Connect4 is solved</em>.
-        And chess is several orders of magnitude away: AlphaZero used 5,000 TPUs for nine
-        hours. The realistic target here is a bot that provably improves and reaches perhaps
-        1500–2000 Elo — not a Stockfish rival.
+        And 271&times; of it is already bought back by algorithm choice, on the same
+        machine: Gumbel search at 32 simulations instead of 800, and a network sized for
+        the compute available. That turns 68.8 years into 93 days without touching the
+        hardware.
+      </p>
+      <p>
+        At roughly <strong>20,000 games an hour</strong>, a day of self-play is 475,000
+        games and a week is 3.3 million. So the binding constraint is no longer
+        games-per-hour, which is now known — it is games-to-target, which is not. That is
+        the honest uncertainty, and it is a much more interesting one to have.
+      </p>
+    </div>
+
+    <div class="col stack" style="margin-top:20px">
+      <div class="eyebrow" style="margin-bottom:8px">What is not claimed</div>
+      <p>
+        Connect4 tactical accuracy tops out at 0.583 on raw policy and 0.750 with search —
+        not 1.0. Those are real misses against exact ground truth on positions with a forced
+        win or a forced block. A 496k-parameter network at 32 simulations does not master
+        Connect4 in fourteen minutes, and the gate for the phase was <em>the loop learns</em>,
+        not <em>Connect4 is solved</em>.
+      </p>
+      <p>
+        The throughput figures above are inference only; real training competes for the same
+        GPU, and 135 plies per game is an estimate. Chess remains a target of perhaps
+        1500&ndash;2000 Elo — but that is a budget conclusion, not a ceiling, and the budget
+        turns out to be far less forbidding than the headline five thousand TPUs suggests.
       </p>
     </div>
   </section>
