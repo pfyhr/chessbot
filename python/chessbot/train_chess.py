@@ -90,7 +90,7 @@ def train_steps(net, opt, buffer, args, device: str) -> dict[str, float]:
         x = torch.from_numpy(obs[idx].astype(np.float32)).to(device)
         pt = torch.from_numpy(pol[idx].astype(np.float32)).to(device)
         zt = torch.from_numpy(z[idx]).to(device)
-        mt = torch.from_numpy(vmask[idx]).to(device)
+        mt = None if args.no_value_mask else torch.from_numpy(vmask[idx]).to(device)
 
         policy_logits, wdl = net(x)
         p_loss, v_loss = losses(policy_logits, wdl, pt, zt, mt)
@@ -115,6 +115,14 @@ def train_steps(net, opt, buffer, args, device: str) -> dict[str, float]:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--generations", type=int, default=20)
+    ap.add_argument("--max-hours", type=float, default=None,
+                    help="stop after this much wall clock, whatever the generation count")
+    ap.add_argument("--eval-every", type=int, default=1,
+                    help="run the full evaluation every Nth generation")
+    ap.add_argument("--no-value-mask", action="store_true",
+                    help="train the value head on truncated games too, scoring them "
+                         "as draws -- the pre-fix behaviour, kept so it can be "
+                         "measured against rather than assumed worse")
     ap.add_argument("--games", type=int, default=256)
     ap.add_argument("--concurrency", type=int, default=256)
     ap.add_argument("--sims", type=int, default=32)
@@ -125,10 +133,13 @@ def main() -> None:
     ap.add_argument("--max-plies", type=int, default=400)
     ap.add_argument("--steps", type=int, default=250)
     ap.add_argument("--batch", type=int, default=512)
-    ap.add_argument("--lr", type=float, default=1e-3)
+    # 5e-4 and a window of 8, not 1e-3 and 4: at the old settings opening
+    # preference oscillated between 0.111 and 0.730 across generations, which is
+    # a network chasing whatever it saw last rather than one learning slowly.
+    ap.add_argument("--lr", type=float, default=5e-4)
     ap.add_argument("--blocks", type=int, default=6)
     ap.add_argument("--channels", type=int, default=96)
-    ap.add_argument("--window", type=int, default=4)
+    ap.add_argument("--window", type=int, default=8)
     ap.add_argument("--eval-games", type=int, default=60)
     ap.add_argument("--tactics", type=int, default=200)
     ap.add_argument("--device", default="auto")
@@ -145,7 +156,10 @@ def main() -> None:
     params = sum(p.numel() for p in net.parameters())
 
     print(f"device={device}  net={args.blocks}x{args.channels} ({params/1e6:.2f}M params)")
-    print(f"sims={args.sims}  games/gen={args.games}  max_plies={args.max_plies}\n")
+    print(f"sims={args.sims}  games/gen={args.games}  max_plies={args.max_plies}")
+    print(f"window={args.window}  lr={args.lr}  "
+          f"value_mask={'off' if args.no_value_mask else 'on'}"
+          + (f"  budget={args.max_hours}h" if args.max_hours else "") + "\n")
 
     print("building tactical suites from random play...")
     tactics = ev.build_tactics(args.tactics, args.tactics, seed=11)
@@ -170,7 +184,11 @@ def main() -> None:
     print(header)
     print("-" * len(header))
 
+    last_eval = {}
     for gen in range(args.generations):
+        if args.max_hours is not None and (time.time() - t0) / 3600 >= args.max_hours:
+            print(f"\nwall-clock budget of {args.max_hours}h reached at generation {gen}")
+            break
         gen_start = time.time()
 
         (obs, pol, z, vmask), stats = selfplay_generation(net, device, args, seed=7000 + gen)
@@ -178,26 +196,36 @@ def main() -> None:
         losses_ = train_steps(net, opt, buffer, args, device)
 
         net.eval()
-        tac = ev.tactic_accuracy(net, tactics, device)
-        opening = ev.opening_mass(net, device)
-        # The sensitive early signal: win/loss stays at 0.5 for a long time
-        # because a weak net cannot force mate, but material moves immediately.
-        mat = ev.material_vs_random(net, args.eval_games, device, seed=gen, plies=60)
-        vs_random = ev.play_match(
-            net, net, args.eval_games, device, seed=gen, opponent_random=True
-        )["score"]
-        vs_prev = (
-            ev.play_match(net, previous, args.eval_games, device, seed=5000 + gen)["score"]
-            if previous is not None
-            else float("nan")
-        )
+        # Evaluation is not free -- skipping it on most generations buys back
+        # time for the thing being measured.
+        full_eval = (gen % args.eval_every == 0) or (gen == args.generations - 1)
+        if full_eval:
+            tac = ev.tactic_accuracy(net, tactics, device)
+            opening = ev.opening_mass(net, device)
+            # The sensitive early signal: win/loss stays at 0.5 for a long time
+            # because a weak net cannot force mate, but material moves immediately.
+            mat = ev.material_vs_random(net, args.eval_games, device, seed=gen, plies=60)
+            vs_random = ev.play_match(
+                net, net, args.eval_games, device, seed=gen, opponent_random=True
+            )["score"]
+            vs_prev = (
+                ev.play_match(net, previous, args.eval_games, device, seed=5000 + gen)["score"]
+                if previous is not None
+                else float("nan")
+            )
+            last_eval = dict(tac=tac, opening=opening, mat=mat,
+                             vs_random=vs_random, vs_prev=vs_prev)
+        else:
+            tac, opening, mat = last_eval["tac"], last_eval["opening"], last_eval["mat"]
+            vs_random, vs_prev = last_eval["vs_random"], last_eval["vs_prev"]
 
         elapsed = time.time() - gen_start
         history.append({
             "gen": gen, "games": stats["games"], "mean_plies": stats["mean_plies"],
             "evaluations": stats["evaluations"], "white_wins": stats["white_wins"],
             "black_wins": stats["black_wins"], "draws": stats["draws"],
-            "truncated": stats["truncated"], **losses_,
+            "truncated": stats["truncated"], "elapsed_total": time.time() - t0,
+            "evaluated": full_eval, **losses_,
             "mate": tac["mate"], "defend": tac["defend"], "tactics": tac["all"],
             "opening": opening, "material": mat["material"],
             "vs_random": vs_random, "vs_prev": vs_prev,
