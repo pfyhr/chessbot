@@ -17,7 +17,7 @@ Three goals, in order:
 - [x] **Phase 1b** — position/move encoding (4672-move policy), cross-checked vs `python-chess`
 - [x] **Phase 1c** — PyO3/maturin bridge, measured against a network forward
 - [x] **Phase 2** — Gumbel MCTS + batched self-play, validated on Connect4
-- [ ] Phase 3 — chess self-play + SE-ResNet training
+- [x] **Phase 3** — chess self-play; loop verified on chess (+127 Elo in one hour)
 - [ ] Phase 4 — UCI binary, time-ladder checkpoints, fastchess/Ordo harness
 - [ ] Phase 5 — performance engineering
 - [ ] Phase 6 — tabula-rasa vs warm-start experiment
@@ -140,6 +140,32 @@ The number that shapes Phase 2 is the other one: MPS has a ~2 ms fixed cost per 
 batch of 1 gets 482 positions/sec against 24,411 at batch 512 — **50x from batching alone**.
 Self-play has to run ~128 games concurrently and pool their leaf evaluations, or the GPU
 sits 98% idle.
+
+## Chess
+
+```
+.venv/bin/chess-train --generations 25 --games 256 --out runs/chess-v1
+.venv/bin/chess-report runs/chess-v1
+.venv/bin/chess-play --ladder --device cpu      # play any generation
+```
+
+25 generations, 6,400 games, **62 minutes**
+([full report](bench/results/2026-08-20-chess-first-run.md)):
+
+| | gen 0 | gen 24 | random baseline |
+|---|---:|---:|---:|
+| material vs random | -1.31 | **+4.04** | -0.06 |
+| defend (avoid mate-in-1) | 0.210 | 0.285 | 0.229 |
+| mate-in-1 | 0.030 | 0.010 | 0.031 |
+
+Last vs first over 200 games: **94W–24L–82D with search (+127 Elo)**; without search,
+196 of 200 are draws and the same two nets score exactly 0.500. Neither network can
+convert without search, so raw-policy match play cannot see the difference at all —
+the opposite of Connect4, where the raw margin was the larger one.
+
+Mate-in-1 never leaves chance, and opening preference oscillates rather than
+converging. 6,400 games is ~0.015% of AlphaZero's 44 million; the claim is that the
+machinery works on chess, not that the engine is good.
 
 ## Compute budget
 
