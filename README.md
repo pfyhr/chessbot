@@ -146,7 +146,8 @@ sits 98% idle.
 ```
 .venv/bin/chess-train --generations 25 --games 256 --out runs/chess-v1
 .venv/bin/chess-report runs/chess-v1
-.venv/bin/chess-play --ladder --device cpu      # play any generation
+.venv/bin/chess-serve --device cpu              # clickable board in a browser
+.venv/bin/chess-play --ladder --device cpu      # or the terminal client
 ```
 
 25 generations, 6,400 games, **62 minutes**
