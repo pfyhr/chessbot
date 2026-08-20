@@ -200,6 +200,15 @@ def opening_mass(net, device: str) -> float:
 # --- match play -------------------------------------------------------------
 
 
+def _score(board, outcome: str, a_is_white: bool) -> float:
+    """Result from net_a's point of view: +1 win, -1 loss, 0 draw."""
+    if outcome == "draw":
+        return 0.0
+    # The side to move has lost, so the previous mover won.
+    loser_is_white = board.turn == "white"
+    return 1.0 if (not loser_is_white) == a_is_white else -1.0
+
+
 def search_moves(net, positions, device, sims, seed) -> list[str]:
     search = cc.ChessSearch(positions, sims=sims, max_considered=16, seed=seed)
     while (obs := search.next_batch()) is not None:
@@ -232,6 +241,11 @@ def play_match(
     """
     rng = np.random.default_rng(seed)
     boards = [cc.Position() for _ in range(games)]
+    a_white = np.arange(games) % 2 == 0
+    results = np.zeros(games)
+    done = np.zeros(games, dtype=bool)
+    plies = np.zeros(games, dtype=int)
+
     for i in range(games):
         for _ in range(opening_plies):
             moves, outcome = boards[i].expand()
@@ -239,10 +253,13 @@ def play_match(
                 break
             boards[i] = boards[i].after(moves[rng.integers(len(moves))])
 
-    a_white = np.arange(games) % 2 == 0
-    results = np.zeros(games)
-    done = np.zeros(games, dtype=bool)
-    plies = np.zeros(games, dtype=int)
+        # A random opening can end the game outright -- four plies is enough for
+        # Fool's mate. Score it here; handing a checkmate to a player asks it for
+        # a legal move from a position that has none.
+        outcome = boards[i].outcome()
+        if outcome is not None:
+            done[i] = True
+            results[i] = _score(boards[i], outcome, bool(a_white[i]))
 
     while not done.all():
         live = np.where(~done)[0]
@@ -253,6 +270,9 @@ def play_match(
             if len(idx) == 0:
                 continue
             positions = [boards[i] for i in idx]
+            assert all(
+                p.outcome() is None for p in positions
+            ), "a finished game reached a player; it should have been scored already"
 
             if not is_a and opponent_random:
                 picks = [
@@ -275,12 +295,9 @@ def play_match(
             if outcome is None and plies[i] < max_plies:
                 continue
             done[i] = True
-            if outcome is None or outcome == "draw":
-                results[i] = 0.0
-            else:
-                # Side to move has lost, so the previous mover won.
-                loser_is_white = boards[i].turn == "white"
-                results[i] = 1.0 if (not loser_is_white) == a_white[i] else -1.0
+            results[i] = (
+                0.0 if outcome is None else _score(boards[i], outcome, bool(a_white[i]))
+            )
 
     wins = int((results > 0).sum())
     losses = int((results < 0).sum())

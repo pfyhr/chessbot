@@ -159,11 +159,24 @@ def play_match(
             if outcome is not None or not moves:
                 break
             boards[i] = boards[i].after(int(moves[rng.integers(len(moves))]))
+
     # a_first[i] decides who moves first, so a first-player advantage cannot be
     # mistaken for one net being stronger.
     a_first = np.arange(games) % 2 == 0
     results = np.zeros(games)  # +1 a wins, -1 b wins, 0 draw
     done = np.zeros(games, dtype=bool)
+
+    # A long enough random opening can finish the game before either net moves.
+    # Score those here; handing a finished game to a player asks it to choose
+    # from a position with no legal moves.
+    for i in range(games):
+        outcome = boards[i].outcome()
+        if outcome is None:
+            continue
+        done[i] = True
+        if outcome != "draw":
+            loser_is_first = boards[i].plies % 2 == 0
+            results[i] = 1.0 if (not loser_is_first) == a_first[i] else -1.0
 
     while not done.all():
         live = np.where(~done)[0]
@@ -176,6 +189,9 @@ def play_match(
             if len(idx) == 0:
                 continue
             positions = [boards[i] for i in idx]
+            assert all(
+                p.outcome() is None for p in positions
+            ), "a finished game reached a player; it should have been scored already"
 
             if is_a is False and opponent_random:
                 picks = [
