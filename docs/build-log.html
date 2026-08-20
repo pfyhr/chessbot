@@ -1,0 +1,987 @@
+<title>Chessbot Build Log</title>
+<style>
+  :root {
+    color-scheme: light;
+    --ground:      #f2f5f8;
+    --surface:     #fdfefe;
+    --surface-2:   #e9eef4;
+    --ink:         #0d1620;
+    --ink-2:       #37475b;
+    --muted:       #59677a;
+    --hairline:    #dbe3ec;
+    --hairline-2:  #c6d2e0;
+    --accent:      #2a78d6;
+    --accent-soft: #e3edfb;
+    --s1: #2a78d6;
+    --s2: #eb6834;
+    --s3: #1baf7a;
+    --good:     #0ca30c;
+    --critical: #d03b3b;
+
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, "Cascadia Mono",
+            "Roboto Mono", Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
+            Arial, sans-serif;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --ground:      #0d1117;
+      --surface:     #151b23;
+      --surface-2:   #1c242e;
+      --ink:         #e9eff6;
+      --ink-2:       #b8c5d4;
+      --muted:       #8896a8;
+      --hairline:    #232c37;
+      --hairline-2:  #33404f;
+      --accent:      #3987e5;
+      --accent-soft: #172538;
+      --s1: #3987e5;
+      --s2: #d95926;
+      --s3: #199e70;
+      --good:     #0ca30c;
+      --critical: #d03b3b;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --ground:      #0d1117;
+    --surface:     #151b23;
+    --surface-2:   #1c242e;
+    --ink:         #e9eff6;
+    --ink-2:       #b8c5d4;
+    --muted:       #8896a8;
+    --hairline:    #232c37;
+    --hairline-2:  #33404f;
+    --accent:      #3987e5;
+    --accent-soft: #172538;
+    --s1: #3987e5;
+    --s2: #d95926;
+    --s3: #199e70;
+    --good:     #0ca30c;
+    --critical: #d03b3b;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.65;
+    margin: 0;
+    padding: 0 20px 96px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1020px; margin: 0 auto; }
+  .col  { max-width: 660px; }
+
+  /* ---------- type ---------- */
+
+  h1, h2, h3, .eyebrow, .fig, th, .num, code, kbd {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  h1 {
+    font-size: clamp(1.85rem, 4.4vw, 2.6rem);
+    line-height: 1.12;
+    letter-spacing: -0.02em;
+    font-weight: 600;
+    margin: 0 0 14px;
+    text-wrap: balance;
+  }
+
+  h2 {
+    font-size: 1.06rem;
+    letter-spacing: 0.02em;
+    font-weight: 600;
+    margin: 0 0 6px;
+    text-wrap: balance;
+  }
+
+  h3 {
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    margin: 0 0 6px;
+  }
+
+  p { margin: 0 0 14px; }
+  p:last-child { margin-bottom: 0; }
+
+  .eyebrow {
+    font-size: 0.68rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+  }
+
+  .lede { font-size: 1.08rem; color: var(--ink-2); }
+  .muted { color: var(--muted); }
+  small { font-size: 0.8rem; line-height: 1.5; }
+
+  code {
+    font-size: 0.855em;
+    background: var(--surface-2);
+    border: 1px solid var(--hairline);
+    border-radius: 4px;
+    padding: 0.1em 0.36em;
+  }
+
+  a { color: var(--accent); }
+
+  /* ---------- structure ---------- */
+
+  header.top {
+    border-bottom: 1px solid var(--hairline-2);
+    padding: 56px 0 26px;
+    margin-bottom: 34px;
+  }
+
+  section { margin: 0 0 46px; }
+
+  .sec-head {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    border-top: 1px solid var(--hairline);
+    padding-top: 14px;
+    margin-bottom: 18px;
+  }
+  .sec-head .eyebrow { flex: none; }
+
+  .stack { display: flex; flex-direction: column; gap: 18px; }
+  .row   { display: flex; flex-wrap: wrap; gap: 14px; }
+
+  /* ---------- stat tiles ---------- */
+
+  .tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(178px, 1fr));
+    gap: 12px;
+    margin-top: 26px;
+  }
+
+  .tile {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 8px;
+    padding: 14px 15px 13px;
+  }
+
+  .tile .fig {
+    display: block;
+    font-size: 1.6rem;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    line-height: 1.1;
+    margin: 6px 0 3px;
+  }
+  .tile .fig .unit { font-size: 0.92rem; font-weight: 500; color: var(--muted); }
+  .tile small { display: block; color: var(--muted); }
+
+  /* ---------- panels ---------- */
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 9px;
+    overflow: hidden;
+  }
+
+  .panel-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 11px 15px;
+    border-bottom: 1px solid var(--hairline);
+    background: var(--surface-2);
+  }
+
+  .panel-body { padding: 15px; }
+  .panel-note {
+    padding: 11px 15px 13px;
+    border-top: 1px solid var(--hairline);
+    color: var(--muted);
+  }
+
+  /* ---------- chart chrome ---------- */
+
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+  .key {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--mono);
+    font-size: 0.74rem;
+    color: var(--ink-2);
+    letter-spacing: 0.01em;
+  }
+  .swatch { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+
+  .chart-scroll { overflow-x: auto; }
+  .chart-scroll svg { display: block; min-width: 560px; width: 100%; height: auto; }
+
+  .grid-line { stroke: var(--hairline); stroke-width: 1; }
+  .axis-text {
+    font-family: var(--mono);
+    font-size: 11px;
+    fill: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .series-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .dlabel {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .toggle {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    background: var(--surface);
+    border: 1px solid var(--hairline-2);
+    border-radius: 5px;
+    padding: 4px 9px;
+    cursor: pointer;
+  }
+  .toggle:hover { border-color: var(--accent); color: var(--accent); }
+  .toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .tip {
+    position: absolute;
+    pointer-events: none;
+    background: var(--surface);
+    border: 1px solid var(--hairline-2);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-family: var(--mono);
+    font-size: 0.73rem;
+    line-height: 1.55;
+    color: var(--ink);
+    box-shadow: 0 6px 18px rgba(13, 22, 32, 0.14);
+    opacity: 0;
+    transition: opacity 0.1s;
+    z-index: 5;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .tip.on { opacity: 1; }
+  .tip .tip-row { display: flex; align-items: center; gap: 6px; }
+  .tip .tip-val { margin-left: auto; font-weight: 600; }
+
+  .chart-host { position: relative; }
+
+  /* ---------- tables ---------- */
+
+  .table-scroll { overflow-x: auto; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.83rem;
+    font-variant-numeric: tabular-nums;
+  }
+  th, td {
+    text-align: right;
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--hairline);
+    white-space: nowrap;
+  }
+  th {
+    font-size: 0.68rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+    border-bottom: 1px solid var(--hairline-2);
+  }
+  th:first-child, td:first-child { text-align: left; }
+  tbody tr:last-child td { border-bottom: none; }
+  td.win { color: var(--ink); font-weight: 600; }
+  .hidden { display: none; }
+
+  /* ---------- phase rail ---------- */
+
+  .rail { display: flex; flex-direction: column; }
+  .phase {
+    display: grid;
+    grid-template-columns: 62px 1fr;
+    gap: 16px;
+    padding: 13px 0;
+    border-top: 1px solid var(--hairline);
+  }
+  .phase:first-child { border-top: none; }
+  .phase-id {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    padding-top: 2px;
+  }
+  .phase-done .phase-id { color: var(--good); }
+  .phase-name { font-family: var(--mono); font-size: 0.88rem; font-weight: 600; }
+  .phase-note { color: var(--muted); font-size: 0.855rem; line-height: 1.55; }
+  .phase-ahead .phase-name { color: var(--muted); font-weight: 500; }
+
+  /* ---------- callouts ---------- */
+
+  .bug {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-left: 3px solid var(--critical);
+    border-radius: 0 8px 8px 0;
+    padding: 13px 15px;
+  }
+  .bug h3 { margin-bottom: 4px; }
+  .bug p { font-size: 0.885rem; line-height: 1.6; color: var(--ink-2); }
+
+  pre {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    line-height: 1.6;
+    background: var(--surface-2);
+    border: 1px solid var(--hairline);
+    border-radius: 7px;
+    padding: 12px 14px;
+    overflow-x: auto;
+    margin: 0;
+    color: var(--ink-2);
+  }
+  pre b { color: var(--ink); font-weight: 600; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="top">
+    <div class="eyebrow">Rust &middot; PyTorch &middot; Apple&nbsp;Silicon</div>
+    <h1>An AlphaZero chess engine, built by measurement</h1>
+    <p class="lede col">
+      Five phases in. The reinforcement-learning loop is finished and proven — on
+      Connect4, deliberately, because a broken loop there is loud, while on chess it
+      would read as &ldquo;learning is slow&rdquo; for weeks. Chess is next.
+    </p>
+
+    <div class="tiles">
+      <div class="tile">
+        <small>perft(6), single thread</small>
+        <span class="fig">1.90<span class="unit">s</span></span>
+        <small>119,060,324 nodes</small>
+      </div>
+      <div class="tile">
+        <small>Rust&#8202;/&#8202;Python boundary</small>
+        <span class="fig">2.5<span class="unit">% max</span></span>
+        <small>of encode + forward</small>
+      </div>
+      <div class="tile">
+        <small>Connect4 loop, 40 generations</small>
+        <span class="fig">14<span class="unit">min</span></span>
+        <small>10,240 games &middot; 6.3M evals</small>
+      </div>
+      <div class="tile">
+        <small>Last generation vs first</small>
+        <span class="fig">+368<span class="unit">Elo</span></span>
+        <small>400 games, search on</small>
+      </div>
+    </div>
+  </header>
+
+  <section>
+    <div class="sec-head"><span class="eyebrow">01</span><h2>How it is put together</h2></div>
+    <div class="col stack">
+      <p>
+        Python drives the training loop, but Rust owns every board and every search
+        tree. The boundary is crossed <strong>once per network batch</strong>, never
+        once per node — a per-node crossing would cost more than the move generation
+        it wraps.
+      </p>
+    </div>
+
+    <div class="panel" style="margin-top:18px">
+      <div class="panel-bar"><span class="eyebrow">The loop</span></div>
+      <div class="panel-body">
+<pre><b>Rust</b>   step 256 games to their next leaf   ──┐
+                                            │  one (N, C, H, W) array
+<b>Python</b> one forward pass on MPS          ◄──┘
+                                            │  logits + values
+<b>Rust</b>   expand, back up, advance          ◄──┘</pre>
+      </div>
+      <div class="panel-note">
+        <small>
+          Because Gumbel search runs at a small simulation budget, each tree needs only
+          <em>one</em> leaf per pass — concurrency comes from the number of games, not from
+          forcing one tree to yield several. That removed virtual loss from the design entirely.
+        </small>
+      </div>
+    </div>
+
+    <div class="col stack" style="margin-top:18px">
+      <p>
+        The search is <strong>Gumbel AlphaZero</strong>, not the 2017 PUCT formulation:
+        root actions sampled without replacement, narrowed by sequential halving, and the
+        <em>improved policy</em> — not visit counts — used as the training target. That is
+        what makes 32 simulations per move viable where the original needed 800. Roughly a
+        25&times; throughput multiplier, and the difference between this being feasible on
+        one machine and not.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="eyebrow">02</span><h2>Phases</h2></div>
+    <div class="rail">
+      <div class="phase phase-done">
+        <div class="phase-id">0 ✓</div>
+        <div>
+          <div class="phase-name">Scaffold &amp; movegen choice</div>
+          <div class="phase-note">Cargo workspace; shakmaty picked over cozy-chess on measurement, not reputation.</div>
+        </div>
+      </div>
+      <div class="phase phase-done">
+        <div class="phase-id">1a ✓</div>
+        <div>
+          <div class="phase-name">Perft correctness</div>
+          <div class="phase-note">All 48 reference node counts across the six standard positions.</div>
+        </div>
+      </div>
+      <div class="phase phase-done">
+        <div class="phase-id">1b ✓</div>
+        <div>
+          <div class="phase-name">Encodings</div>
+          <div class="phase-note">4672-move policy and 119-plane observations, cross-checked against an independently written encoder over 1,815,170 moves.</div>
+        </div>
+      </div>
+      <div class="phase phase-done">
+        <div class="phase-id">1c ✓</div>
+        <div>
+          <div class="phase-name">PyO3 bridge</div>
+          <div class="phase-note">Measured against a real network forward before being built on.</div>
+        </div>
+      </div>
+      <div class="phase phase-done">
+        <div class="phase-id">2 ✓</div>
+        <div>
+          <div class="phase-name">Gumbel MCTS &amp; self-play</div>
+          <div class="phase-note">The full loop, validated end to end on Connect4.</div>
+        </div>
+      </div>
+      <div class="phase phase-ahead">
+        <div class="phase-id">3</div>
+        <div>
+          <div class="phase-name">Chess self-play</div>
+          <div class="phase-note">Same machinery — the core is generic over a <code>Game</code> trait — with a larger network.</div>
+        </div>
+      </div>
+      <div class="phase phase-ahead">
+        <div class="phase-id">4</div>
+        <div>
+          <div class="phase-name">UCI, time-ladder, SPRT</div>
+          <div class="phase-note">Checkpoints on a wall-clock schedule, so &ldquo;how good was it after ten minutes?&rdquo; is playable.</div>
+        </div>
+      </div>
+      <div class="phase phase-ahead">
+        <div class="phase-id">5–6</div>
+        <div>
+          <div class="phase-name">Performance, then the warm-start experiment</div>
+          <div class="phase-note">Tabula rasa against a supervised warm start, same everything else.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="eyebrow">03</span><h2>Does it actually learn?</h2></div>
+    <div class="col stack">
+      <p>
+        Forty generations of self-play, 256 games each, on one M2 Max. Three independent
+        gates, all measured against ground truth rather than against the loss:
+      </p>
+    </div>
+
+    <div class="panel" style="margin-top:18px">
+      <div class="panel-bar">
+        <div class="legend">
+          <span class="key"><span class="swatch" style="background:var(--s1)"></span>centre preference</span>
+          <span class="key"><span class="swatch" style="background:var(--s2)"></span>score vs random</span>
+          <span class="key"><span class="swatch" style="background:var(--s3)"></span>tactical accuracy</span>
+        </div>
+        <button class="toggle" id="tbl-toggle" aria-expanded="false">Table</button>
+      </div>
+      <div class="panel-body">
+        <div class="chart-host" id="learn-host">
+          <div class="chart-scroll"><svg id="learn" viewBox="0 0 960 400" role="img"
+            aria-label="Three learning metrics across forty generations, all rising."></svg></div>
+          <div class="tip" id="learn-tip"></div>
+        </div>
+        <div class="table-scroll hidden" id="learn-table"></div>
+      </div>
+      <div class="panel-note">
+        <small>
+          <strong>The centre line is the one worth trusting most.</strong> Connect4 is solved:
+          the first player wins only by taking the middle column. There is no opening book, no
+          heuristic and no shaped reward anywhere in the loop — the network went from 0.193,
+          <em>below</em> the 1-in-7 you would get by chance, to 0.999 unaided.
+        </small>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:16px; align-items:stretch">
+      <div class="panel" style="flex:1 1 300px">
+        <div class="panel-bar"><span class="eyebrow">Last vs first &middot; 400 games</span></div>
+        <div class="panel-body table-scroll">
+          <table>
+            <thead><tr><th>Condition</th><th>Result</th><th>Score</th><th>Elo</th></tr></thead>
+            <tbody>
+              <tr><td>raw policy</td><td>395–5–0</td><td class="win">0.988</td><td class="win">+759</td></tr>
+              <tr><td>search @32</td><td>357–43–0</td><td class="win">0.892</td><td class="win">+368</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="panel-note"><small>
+          The margins differ because search compensates for a weak policy, so generation&nbsp;0
+          <em>with</em> search is much stronger than without. The searched figure is how much
+          better the engine got; the raw figure is how much better the network got.
+        </small></div>
+      </div>
+
+      <div class="panel" style="flex:1 1 220px">
+        <div class="panel-bar"><span class="eyebrow">Side effect</span></div>
+        <div class="panel-body">
+          <div class="eyebrow">Mean game length</div>
+          <span class="fig" style="font-size:1.55rem;font-weight:600;display:block;margin:6px 0 2px">
+            16.4 <span class="unit" style="color:var(--muted)">→</span> 29.3
+          </span>
+          <small class="muted">plies, generation 0 to 39</small>
+          <p style="margin-top:11px"><small class="muted">
+            Nobody asked for this. Games got longer because both sides stopped losing quickly —
+            a second, unprompted signal that play improved.
+          </small></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="eyebrow">04</span><h2>Decisions made by measurement</h2></div>
+    <div class="col stack">
+      <p>
+        Three choices that would have gone the other way on intuition. Each is a committed
+        benchmark in the repository, not a recollection.
+      </p>
+    </div>
+
+    <div class="panel" style="margin-top:18px">
+      <div class="panel-bar">
+        <span class="eyebrow">Network throughput by batch size &middot; MPS</span>
+        <span class="key muted">positions&#8202;/&#8202;second</span>
+      </div>
+      <div class="panel-body">
+        <div class="chart-host" id="batch-host">
+          <div class="chart-scroll"><svg id="batch" viewBox="0 0 960 280" role="img"
+            aria-label="Throughput rises steeply with batch size and plateaus at 512."></svg></div>
+          <div class="tip" id="batch-tip"></div>
+        </div>
+      </div>
+      <div class="panel-note"><small>
+        Metal carries a fixed cost of roughly 2&nbsp;ms per call, so a batch of one gets 482
+        positions per second against 24,411 at 512 — <strong>50&times; from batching alone</strong>.
+        A straightforward one-game-at-a-time search would leave the GPU 98% idle. This single
+        number set the shape of the self-play driver.
+      </small></div>
+    </div>
+
+    <div class="row" style="margin-top:16px; align-items:stretch">
+      <div class="panel" style="flex:1 1 320px">
+        <div class="panel-bar"><span class="eyebrow">Move generation backend</span></div>
+        <div class="panel-body table-scroll">
+          <table>
+            <thead><tr><th>Mode</th><th>shakmaty</th><th>cozy-chess</th></tr></thead>
+            <tbody>
+              <tr><td>bulk enumeration</td><td>216.8</td><td class="win">528.7</td></tr>
+              <tr><td>make-move</td><td class="win">83.5</td><td>64.7</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="panel-note"><small>
+          Million nodes&#8202;/&#8202;second, best of five. Read only the top row and cozy-chess wins by
+          2.4&times;. But MCTS never enumerates in bulk — it makes one move per visit, and
+          shakmaty wins that on every position tested. The bottom row is the one that predicts
+          self-play throughput.
+        </small></div>
+      </div>
+
+      <div class="panel" style="flex:1 1 240px">
+        <div class="panel-bar"><span class="eyebrow">Node expansion</span></div>
+        <div class="panel-body">
+          <div class="eyebrow">Fusing two calls into one</div>
+          <span class="fig" style="font-size:1.55rem;font-weight:600;display:block;margin:6px 0 2px">1.9&times;</span>
+          <small class="muted">on the hottest operation in the search</small>
+          <p style="margin-top:11px"><small class="muted">
+            Asking for the legal moves and the terminal status separately costs three move
+            generations per node: shakmaty's <code>is_checkmate</code> and
+            <code>is_stalemate</code> each regenerate the list internally.
+          </small></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="eyebrow">05</span><h2>Three bugs worth the trouble</h2></div>
+    <div class="stack" style="max-width:820px">
+
+      <div class="bug">
+        <h3>The improved policy was discarding its own prior</h3>
+        <p>
+          Connect4's centre metric was <em>falling</em> generation over generation — backwards for
+          a game whose solved opening is the middle column. The sigma transform used raw Q values
+          in [−1,&nbsp;1] at unit scale, so the term reached ~60 against logits of order 1. The
+          training target had collapsed to a near one-hot on argmax-Q, at a simulation budget
+          where Q is mostly noise.
+        </p>
+        <p>
+          DeepMind's <code>mctx</code> min-max rescales completed-Q to [0,&nbsp;1] and scales by
+          0.1. Neither detail is in the paper's main text, and the loop still <em>trains</em>
+          without them — just badly. Same seed, generation 1:
+        </p>
+        <pre style="margin-top:10px">before   tactics 0.448   centre 0.083   vs-prev 0.515
+after    tactics 0.347   centre <b>0.399</b>   vs-prev <b>0.740</b></pre>
+      </div>
+
+      <div class="bug">
+        <h3><code>Move::to()</code> returns the rook's square when castling</h3>
+        <p>
+          AlphaZero encodes castling as the king travelling two squares. Trusting shakmaty's
+          <code>to()</code> would have filed every castle on a wrong, position-dependent plane —
+          silently, since the encoding would still have been a valid bijection and every
+          self-consistency test would still have passed.
+        </p>
+      </div>
+
+      <div class="bug">
+        <h3>PyO3 turns <code>Vec&lt;u8&gt;</code> into Python <code>bytes</code></h3>
+        <p>
+          <code>legal_moves()</code> was handing back a bytestring, which then failed as a NumPy
+          index. Changing the binding to <code>u32</code> fixed it. Cheap to fix, invisible until
+          something downstream indexed with it.
+        </p>
+      </div>
+
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="eyebrow">06</span><h2>Play it</h2></div>
+    <div class="col stack">
+      <p>
+        Every generation is a saved checkpoint, so &ldquo;how good was it after N
+        generations?&rdquo; is a question you answer by playing it. The staircase steps up when
+        you win and back when you lose, so it finds your level in a handful of games instead
+        of forty.
+      </p>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-bar"><span class="eyebrow">Terminal</span></div>
+      <div class="panel-body">
+<pre>$ python -m chessbot.play_connect4 --ladder
+
+  <b>you ●</b> vs <b>gen019 ○</b>   search 32 sims
+
+  · · · · · · ·
+  · · · · · · ·
+  · · · · · · ·
+  · · · ○ · · ·
+  · · · ● ○ · ·
+  · · ● ● ○ · ·
+  0 1 2 3 4 5 6
+
+  gen019 plays 4  (it thinks it is better)</pre>
+      </div>
+      <div class="panel-note"><small>
+        This is a rehearsal for the chess time-ladder in phase 4, where checkpoints are saved
+        against wall-clock rather than generation — so the question becomes
+        <em>how many minutes of training</em> it takes to pass a given player.
+      </small></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="eyebrow">07</span><h2>What is not claimed</h2></div>
+    <div class="col stack">
+      <p>
+        Tactical accuracy tops out at 0.583 on raw policy and 0.750 with search — not 1.0.
+        Those are genuine misses against exact ground truth on positions with a forced win or
+        a forced block. A 496k-parameter network at 32 simulations does not master Connect4 in
+        fourteen minutes.
+      </p>
+      <p>
+        The gate for this phase was <em>the loop learns</em>, not <em>Connect4 is solved</em>.
+        And chess is several orders of magnitude away: AlphaZero used 5,000 TPUs for nine
+        hours. The realistic target here is a bot that provably improves and reaches perhaps
+        1500–2000 Elo — not a Stockfish rival.
+      </p>
+    </div>
+  </section>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  const GENS = Array.from({length: 40}, (_, i) => i);
+
+  const SERIES = [
+    { key: "centre",  name: "centre preference", short: "centre", color: "--s1",
+      data: [0.1932,0.399,0.3564,0.5249,0.3745,0.3078,0.4295,0.4751,0.5963,0.555,0.5458,0.6064,0.7165,0.723,0.7273,0.8071,0.8258,0.8828,0.8991,0.9583,0.9415,0.9768,0.9878,0.9912,0.9948,0.9963,0.9976,0.9984,0.9989,0.9993,0.9984,0.9992,0.999,0.999,0.9995,0.9993,0.9987,0.9991,0.9993,0.9986] },
+    { key: "vsrand",  name: "score vs random", short: "vs random", color: "--s2",
+      data: [0.7,0.83,0.895,0.895,0.885,0.9375,0.9325,0.91,0.93,0.9325,0.9,0.98,0.96,0.98,0.96,0.975,0.98,0.95,0.95,0.96,0.975,0.9625,0.965,0.98,0.97,0.97,0.98,0.965,0.975,0.965,0.97,0.95,0.975,0.99,0.9425,0.95,0.98,0.98,0.98,0.98] },
+    { key: "tactics", name: "tactical accuracy", short: "tactics", color: "--s3",
+      data: [0.295,0.3475,0.395,0.4375,0.4525,0.4825,0.465,0.4775,0.455,0.5225,0.4975,0.5425,0.5275,0.5625,0.5125,0.53,0.5425,0.4925,0.5475,0.5425,0.5425,0.5625,0.5375,0.5375,0.5325,0.54,0.535,0.5125,0.515,0.4875,0.545,0.55,0.5,0.5725,0.5225,0.5575,0.565,0.6075,0.61,0.5825] }
+  ];
+
+  const SVG = "http://www.w3.org/2000/svg";
+  const el = (n, a) => {
+    const e = document.createElementNS(SVG, n);
+    for (const k in a) e.setAttribute(k, a[k]);
+    return e;
+  };
+  const cssVar = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+  /* ---------------- line chart ---------------- */
+
+  const L = { w: 960, h: 400, top: 18, right: 132, bottom: 40, left: 46 };
+  const lx = (i) => L.left + (i / (GENS.length - 1)) * (L.w - L.left - L.right);
+  const ly = (v) => L.top + (1 - v) * (L.h - L.top - L.bottom);
+
+  function drawLine() {
+    const svg = document.getElementById("learn");
+    svg.textContent = "";
+
+    // recessive grid + y axis
+    for (let t = 0; t <= 1.0001; t += 0.25) {
+      const y = ly(t);
+      svg.appendChild(el("line", { x1: L.left, y1: y, x2: L.w - L.right, y2: y, class: "grid-line" }));
+      const lab = el("text", { x: L.left - 9, y: y + 4, class: "axis-text", "text-anchor": "end" });
+      lab.textContent = t.toFixed(2);
+      svg.appendChild(lab);
+    }
+
+    // x axis
+    [0, 10, 20, 30, 39].forEach((g) => {
+      const t = el("text", { x: lx(g), y: L.h - L.bottom + 20, class: "axis-text", "text-anchor": "middle" });
+      t.textContent = g;
+      svg.appendChild(t);
+    });
+    const xt = el("text", { x: (L.left + L.w - L.right) / 2, y: L.h - 6, class: "axis-text", "text-anchor": "middle" });
+    xt.textContent = "generation";
+    svg.appendChild(xt);
+
+    SERIES.forEach((s) => {
+      const d = s.data.map((v, i) => `${i ? "L" : "M"}${lx(i).toFixed(1)},${ly(v).toFixed(1)}`).join("");
+      svg.appendChild(el("path", { d: d, class: "series-line", stroke: cssVar(s.color) }));
+    });
+
+    // Direct labels at the final point, so identity never rests on colour alone.
+    // centre ends at 0.999 and vs-random at 0.98 -- six pixels apart -- so the
+    // labels are pushed to a minimum spacing and given a leader to the line.
+    const MIN_GAP = 15;
+    const ends = SERIES
+      .map((s, k) => ({ s: s, k: k, v: s.data[s.data.length - 1], y: ly(s.data[s.data.length - 1]) }))
+      .sort((a, b) => a.y - b.y);
+    for (let i = 1; i < ends.length; i++) {
+      if (ends[i].y - ends[i - 1].y < MIN_GAP) ends[i].y = ends[i - 1].y + MIN_GAP;
+    }
+    ends.forEach((e) => {
+      const trueY = ly(e.v);
+      if (Math.abs(e.y - trueY) > 1) {
+        svg.appendChild(el("path", {
+          d: `M${L.w - L.right},${trueY.toFixed(1)}L${L.w - L.right + 7},${e.y.toFixed(1)}`,
+          stroke: cssVar(e.s.color), "stroke-width": 1, fill: "none", opacity: 0.55
+        }));
+      }
+      const t = el("text", {
+        x: L.w - L.right + 11, y: e.y + 4, class: "dlabel", fill: cssVar(e.s.color)
+      });
+      t.textContent = e.v.toFixed(2) + "  " + e.s.short;
+      svg.appendChild(t);
+    });
+
+    const focus = el("g", { opacity: 0 });
+    const vline = el("line", { y1: L.top, y2: L.h - L.bottom, stroke: cssVar("--hairline-2"), "stroke-width": 1 });
+    focus.appendChild(vline);
+    const dots = SERIES.map((s) => {
+      const c = el("circle", { r: 4.5, fill: cssVar(s.color), stroke: cssVar("--surface"), "stroke-width": 2 });
+      focus.appendChild(c);
+      return c;
+    });
+    svg.appendChild(focus);
+
+    const hit = el("rect", {
+      x: L.left, y: L.top, width: L.w - L.left - L.right, height: L.h - L.top - L.bottom,
+      fill: "transparent", style: "cursor:crosshair"
+    });
+    svg.appendChild(hit);
+
+    const tip = document.getElementById("learn-tip");
+    const host = document.getElementById("learn-host");
+
+    function move(ev) {
+      const box = svg.getBoundingClientRect();
+      const px = ((ev.clientX - box.left) / box.width) * L.w;
+      let i = Math.round(((px - L.left) / (L.w - L.left - L.right)) * (GENS.length - 1));
+      i = Math.max(0, Math.min(GENS.length - 1, i));
+
+      focus.setAttribute("opacity", 1);
+      vline.setAttribute("x1", lx(i));
+      vline.setAttribute("x2", lx(i));
+      dots.forEach((c, k) => {
+        c.setAttribute("cx", lx(i));
+        c.setAttribute("cy", ly(SERIES[k].data[i]));
+      });
+
+      tip.innerHTML =
+        `<div style="color:var(--muted);margin-bottom:3px">generation ${i}</div>` +
+        SERIES.map((s) =>
+          `<div class="tip-row"><span class="swatch" style="width:8px;height:8px;background:${cssVar(s.color)}"></span>` +
+          `<span>${s.name}</span><span class="tip-val">${s.data[i].toFixed(3)}</span></div>`
+        ).join("");
+
+      const hostBox = host.getBoundingClientRect();
+      const x = ((lx(i) / L.w) * box.width) + (box.left - hostBox.left);
+      tip.classList.add("on");
+      const tw = tip.offsetWidth;
+      tip.style.left = Math.max(0, Math.min(hostBox.width - tw, x - tw / 2)) + "px";
+      tip.style.top = "6px";
+    }
+
+    hit.addEventListener("mousemove", move);
+    hit.addEventListener("mouseleave", () => {
+      focus.setAttribute("opacity", 0);
+      tip.classList.remove("on");
+    });
+  }
+
+  /* ---------------- table view (contrast relief) ---------------- */
+
+  function buildTable() {
+    const rows = GENS.filter((g) => g % 4 === 0 || g === 39);
+    const head = `<thead><tr><th>Gen</th>${SERIES.map((s) => `<th>${s.name}</th>`).join("")}</tr></thead>`;
+    const body = rows.map((g) =>
+      `<tr><td>${g}</td>${SERIES.map((s) => `<td>${s.data[g].toFixed(3)}</td>`).join("")}</tr>`
+    ).join("");
+    document.getElementById("learn-table").innerHTML = `<table>${head}<tbody>${body}</tbody></table>`;
+  }
+
+  /* ---------------- bar chart ---------------- */
+
+  const BATCH = [
+    { label: "1", v: 482 }, { label: "8", v: 3633 }, { label: "32", v: 11125 },
+    { label: "128", v: 20940 }, { label: "512", v: 24411 },
+    { label: "1024", v: 24473 }, { label: "2048", v: 24451 }
+  ];
+
+  function drawBars() {
+    const B = { w: 960, h: 280, top: 22, right: 16, bottom: 44, left: 62 };
+    const svg = document.getElementById("batch");
+    svg.textContent = "";
+    const max = 26000;
+    const by = (v) => B.top + (1 - v / max) * (B.h - B.top - B.bottom);
+    const inner = B.w - B.left - B.right;
+    const slot = inner / BATCH.length;
+    const bw = slot - 20; // >=2px surface gap between adjacent bars
+
+    [0, 6500, 13000, 19500, 26000].forEach((t) => {
+      const y = by(t);
+      svg.appendChild(el("line", { x1: B.left, y1: y, x2: B.w - B.right, y2: y, class: "grid-line" }));
+      const lab = el("text", { x: B.left - 9, y: y + 4, class: "axis-text", "text-anchor": "end" });
+      lab.textContent = t >= 1000 ? (t / 1000) + "k" : t;
+      svg.appendChild(lab);
+    });
+
+    const tip = document.getElementById("batch-tip");
+    const host = document.getElementById("batch-host");
+
+    BATCH.forEach((d, i) => {
+      const x = B.left + i * slot + (slot - bw) / 2;
+      const y = by(d.v);
+      const h = by(0) - y;
+      const radius = Math.min(4, h / 2);
+      svg.appendChild(el("rect", {
+        x: x, y: y, width: bw, height: Math.max(h, 2), rx: radius, ry: radius, fill: cssVar("--s1")
+      }));
+      // Square off the baseline end so the bar reads as anchored, not floating.
+      if (h > 8) {
+        svg.appendChild(el("rect", { x: x, y: y + h - 5, width: bw, height: 5, fill: cssVar("--s1") }));
+      }
+
+      const lab = el("text", { x: x + bw / 2, y: B.h - B.bottom + 19, class: "axis-text", "text-anchor": "middle" });
+      lab.textContent = d.label;
+      svg.appendChild(lab);
+
+      const val = el("text", { x: x + bw / 2, y: y - 7, class: "dlabel", "text-anchor": "middle", fill: cssVar("--ink-2") });
+      val.textContent = d.v.toLocaleString();
+      svg.appendChild(val);
+
+      const hit = el("rect", { x: B.left + i * slot, y: B.top, width: slot, height: B.h - B.top - B.bottom, fill: "transparent" });
+      hit.addEventListener("mouseenter", () => {
+        tip.innerHTML =
+          `<div style="color:var(--muted);margin-bottom:3px">batch ${d.label}</div>` +
+          `<div class="tip-row"><span>positions/sec</span><span class="tip-val">${d.v.toLocaleString()}</span></div>` +
+          `<div class="tip-row"><span>vs batch 1</span><span class="tip-val">${(d.v / 482).toFixed(1)}&times;</span></div>`;
+        tip.classList.add("on");
+        const box = svg.getBoundingClientRect();
+        const hostBox = host.getBoundingClientRect();
+        const cx = (((B.left + i * slot + slot / 2) / B.w) * box.width) + (box.left - hostBox.left);
+        const tw = tip.offsetWidth;
+        tip.style.left = Math.max(0, Math.min(hostBox.width - tw, cx - tw / 2)) + "px";
+        tip.style.top = "4px";
+      });
+      hit.addEventListener("mouseleave", () => tip.classList.remove("on"));
+      svg.appendChild(hit);
+    });
+
+    const xt = el("text", { x: (B.left + B.w - B.right) / 2, y: B.h - 8, class: "axis-text", "text-anchor": "middle" });
+    xt.textContent = "batch size";
+    svg.appendChild(xt);
+  }
+
+  function renderAll() { drawLine(); drawBars(); }
+
+  buildTable();
+  renderAll();
+
+  const btn = document.getElementById("tbl-toggle");
+  btn.addEventListener("click", () => {
+    const table = document.getElementById("learn-table");
+    const chart = document.getElementById("learn-host");
+    const showing = !table.classList.contains("hidden");
+    table.classList.toggle("hidden", showing);
+    chart.classList.toggle("hidden", !showing);
+    btn.setAttribute("aria-expanded", String(!showing));
+    btn.textContent = showing ? "Table" : "Chart";
+  });
+
+  // Colours come from CSS custom properties, so a theme change must repaint.
+  const mq = window.matchMedia("(prefers-color-scheme: dark)");
+  mq.addEventListener?.("change", renderAll);
+  new MutationObserver(renderAll).observe(document.documentElement, {
+    attributes: true, attributeFilter: ["data-theme"]
+  });
+})();
+</script>

@@ -33,6 +33,21 @@ tests/             cross-language checks against python-chess
 bench/results      committed benchmark results and the decisions they drove
 ```
 
+## Playing against a generation
+
+Every generation is a saved checkpoint, so "how good was it after N generations?" is a
+question you answer by playing it:
+
+```
+PYTHONPATH=python .venv/bin/python -m chessbot.play_connect4 --gen 39
+PYTHONPATH=python .venv/bin/python -m chessbot.play_connect4 --ladder
+```
+
+`--ladder` runs a staircase: win and you face a later generation, lose and you drop back,
+so it finds your level in a handful of games rather than forty. This is a rehearsal for the
+chess time-ladder in Phase 4, where checkpoints are saved against wall-clock instead of
+generation — so the question becomes *how many minutes of training* it takes to pass you.
+
 ## Running the Connect4 loop
 
 Connect4 is not a side quest — it is the gate. A correct RL loop converges here in
