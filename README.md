@@ -39,8 +39,8 @@ Every generation is a saved checkpoint, so "how good was it after N generations?
 question you answer by playing it:
 
 ```
-PYTHONPATH=python .venv/bin/python -m chessbot.play_connect4 --gen 39
-PYTHONPATH=python .venv/bin/python -m chessbot.play_connect4 --ladder
+.venv/bin/c4-play --gen 39      # or: .venv/bin/python -m chessbot.play_connect4
+.venv/bin/c4-play --ladder
 ```
 
 `--ladder` runs a staircase: win and you face a later generation, lose and you drop back,
@@ -54,7 +54,7 @@ Connect4 is not a side quest — it is the gate. A correct RL loop converges her
 minutes, so a wrong one is *loud* instead of looking like "chess is slow to learn".
 
 ```
-PYTHONPATH=python .venv/bin/python -m chessbot.train_connect4 --generations 40
+.venv/bin/c4-train --generations 40
 ```
 
 Four gates, ordered by how much they tell you:

@@ -13,10 +13,18 @@ dependencies = ["numpy>=2.0"]
 [project.optional-dependencies]
 dev = ["pytest>=9.0", "chess>=1.11"]
 
+[project.scripts]
+c4-play = "chessbot.play_connect4:main"
+c4-train = "chessbot.train_connect4:main"
+c4-report = "chessbot.connect4_report:main"
+
 [tool.maturin]
 manifest-path = "crates/az-py/Cargo.toml"
-module-name = "chessbot_core"
+module-name = "chessbot_core._core"
 features = ["extension-module"]
+# Install the pure-Python `chessbot` package alongside the Rust extension, so
+# `python -m chessbot.play_connect4` works from the venv with no PYTHONPATH.
+python-source = "python"
 # Build in release even for `maturin develop`: a debug-build core is 20-50x
 # slower and would make every throughput number meaningless.
 profile = "release"

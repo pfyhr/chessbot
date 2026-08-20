@@ -24,7 +24,7 @@ use az_core::ChessPos;
 use pyo3::prelude::*;
 
 #[pymodule]
-fn chessbot_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<chess::PyPosition>()?;
     m.add_function(wrap_pyfunction!(chess::encode_batch, m)?)?;
     m.add_function(wrap_pyfunction!(chess::legal_mask_batch, m)?)?;
