@@ -221,10 +221,15 @@ pub(crate) fn legal_mask_batch<'py>(
 
 const OBS: usize = 119 * 64;
 
-/// `(obs, policy, z)` as handed to the training loop.
+/// `(obs, policy, z, value_mask)` as handed to the training loop.
+///
+/// `value_mask` is 0 for positions from games the ply limit cut short. Those
+/// games have no known result, so `z` there is a fabrication and the value loss
+/// must skip them.
 type TrainingArrays<'py> = (
     Bound<'py, PyArray4<f32>>,
     Bound<'py, PyArray2<f32>>,
+    Bound<'py, PyArray1<f32>>,
     Bound<'py, PyArray1<f32>>,
 );
 
@@ -306,11 +311,15 @@ impl PyChessSelfPlay {
         self.inner.games_completed()
     }
 
-    /// Drain finished games as `(obs, policy, z)`.
+    /// Drain finished games as `(obs, policy, z, value_mask)`.
     ///
     /// The policy target is dense over all 4672 slots, which is 18 KB per position
     /// -- large, but it is the shape the loss wants and the buffer is drained every
     /// generation.
+    ///
+    /// `value_mask` is zero for games stopped by the ply limit. Such a game has no
+    /// result; calling it a draw would teach the value head an outcome that never
+    /// happened.
     fn take_training_data<'py>(&mut self, py: Python<'py>) -> PyResult<TrainingArrays<'py>> {
         let trajectories = self.inner.take_finished();
         let m: usize = trajectories.iter().map(|t| t.samples.len()).sum();
@@ -318,15 +327,18 @@ impl PyChessSelfPlay {
         let mut obs = vec![0.0f32; m * OBS];
         let mut policy = vec![0.0f32; m * 4672];
         let mut z = vec![0.0f32; m];
+        let mut mask = vec![0.0f32; m];
 
         let mut i = 0;
         for t in &trajectories {
+            let known = if t.decided { 1.0 } else { 0.0 };
             for s in &t.samples {
                 s.pos.encode(&mut obs[i * OBS..(i + 1) * OBS]);
                 for &(idx, p) in &s.policy {
                     policy[i * 4672 + idx as usize] = p;
                 }
                 z[i] = s.z;
+                mask[i] = known;
                 i += 1;
             }
         }
@@ -339,6 +351,7 @@ impl PyChessSelfPlay {
                 .map_err(|e| PyValueError::new_err(e.to_string()))?
                 .into_pyarray(py),
             Array1::from_vec(z).into_pyarray(py),
+            Array1::from_vec(mask).into_pyarray(py),
         ))
     }
 
@@ -351,6 +364,7 @@ impl PyChessSelfPlay {
         d.set_item("black_wins", black)?;
         d.set_item("draws", draws)?;
         d.set_item("mean_plies", mean_plies)?;
+        d.set_item("truncated", self.inner.truncated())?;
         d.set_item("evaluations", self.inner.evaluations())?;
         Ok(d)
     }

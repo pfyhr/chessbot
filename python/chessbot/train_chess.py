@@ -69,9 +69,9 @@ def selfplay_generation(net, device: str, args, seed: int):
             np.ascontiguousarray(values.astype(np.float32)),
         )
 
-    obs, policy, z = sp.take_training_data()
+    obs, policy, z, mask = sp.take_training_data()
     # float16 in the buffer: full precision here would be ~4 GB per generation.
-    return (obs.astype(np.float16), policy.astype(np.float16), z), sp.stats()
+    return (obs.astype(np.float16), policy.astype(np.float16), z, mask), sp.stats()
 
 
 def train_steps(net, opt, buffer, args, device: str) -> dict[str, float]:
@@ -79,6 +79,7 @@ def train_steps(net, opt, buffer, args, device: str) -> dict[str, float]:
     obs = np.concatenate([b[0] for b in buffer])
     pol = np.concatenate([b[1] for b in buffer])
     z = np.concatenate([b[2] for b in buffer])
+    vmask = np.concatenate([b[3] for b in buffer])
 
     n = len(obs)
     rng = np.random.default_rng(0)
@@ -89,9 +90,10 @@ def train_steps(net, opt, buffer, args, device: str) -> dict[str, float]:
         x = torch.from_numpy(obs[idx].astype(np.float32)).to(device)
         pt = torch.from_numpy(pol[idx].astype(np.float32)).to(device)
         zt = torch.from_numpy(z[idx]).to(device)
+        mt = torch.from_numpy(vmask[idx]).to(device)
 
         policy_logits, wdl = net(x)
-        p_loss, v_loss = losses(policy_logits, wdl, pt, zt)
+        p_loss, v_loss = losses(policy_logits, wdl, pt, zt, mt)
         loss = p_loss + v_loss
 
         opt.zero_grad(set_to_none=True)
@@ -102,7 +104,12 @@ def train_steps(net, opt, buffer, args, device: str) -> dict[str, float]:
         p_tot += p_loss.detach().item()
         v_tot += v_loss.detach().item()
 
-    return {"policy_loss": p_tot / args.steps, "value_loss": v_tot / args.steps, "samples": n}
+    return {
+        "policy_loss": p_tot / args.steps,
+        "value_loss": v_tot / args.steps,
+        "samples": n,
+        "known_fraction": float(vmask.mean()),
+    }
 
 
 def main() -> None:
@@ -112,7 +119,10 @@ def main() -> None:
     ap.add_argument("--concurrency", type=int, default=256)
     ap.add_argument("--sims", type=int, default=32)
     ap.add_argument("--considered", type=int, default=16)
-    ap.add_argument("--max-plies", type=int, default=200)
+    # 400, not 200: at 200 nearly half of all games ran out of plies and 55% of
+    # training positions carried an invented result. At 400 only 2% truncate, for
+    # ~16% more compute -- the games were finishing, they just needed room.
+    ap.add_argument("--max-plies", type=int, default=400)
     ap.add_argument("--steps", type=int, default=250)
     ap.add_argument("--batch", type=int, default=512)
     ap.add_argument("--lr", type=float, default=1e-3)
@@ -154,7 +164,8 @@ def main() -> None:
 
     header = (
         f"{'gen':>4} {'games':>6} {'plies':>6} {'p_loss':>8} {'v_loss':>7} "
-        f"{'mate':>6} {'defend':>7} {'open':>6} {'mat':>6} {'vs-rand':>8} {'vs-prev':>8} {'sec':>6}"
+        f"{'trunc':>6} {'mate':>6} {'defend':>7} {'open':>6} {'mat':>6} "
+        f"{'vs-rand':>8} {'vs-prev':>8} {'sec':>6}"
     )
     print(header)
     print("-" * len(header))
@@ -162,8 +173,8 @@ def main() -> None:
     for gen in range(args.generations):
         gen_start = time.time()
 
-        (obs, pol, z), stats = selfplay_generation(net, device, args, seed=7000 + gen)
-        buffer.append((obs, pol, z))
+        (obs, pol, z, vmask), stats = selfplay_generation(net, device, args, seed=7000 + gen)
+        buffer.append((obs, pol, z, vmask))
         losses_ = train_steps(net, opt, buffer, args, device)
 
         net.eval()
@@ -185,7 +196,8 @@ def main() -> None:
         history.append({
             "gen": gen, "games": stats["games"], "mean_plies": stats["mean_plies"],
             "evaluations": stats["evaluations"], "white_wins": stats["white_wins"],
-            "black_wins": stats["black_wins"], "draws": stats["draws"], **losses_,
+            "black_wins": stats["black_wins"], "draws": stats["draws"],
+            "truncated": stats["truncated"], **losses_,
             "mate": tac["mate"], "defend": tac["defend"], "tactics": tac["all"],
             "opening": opening, "material": mat["material"],
             "vs_random": vs_random, "vs_prev": vs_prev,
@@ -195,6 +207,7 @@ def main() -> None:
         print(
             f"{gen:>4} {stats['games']:>6} {stats['mean_plies']:>6.0f} "
             f"{losses_['policy_loss']:>8.4f} {losses_['value_loss']:>7.4f} "
+            f"{100*stats['truncated']/max(stats['games'],1):>5.0f}% "
             f"{tac['mate']:>6.3f} {tac['defend']:>7.3f} {opening:>6.3f} "
             f"{mat['material']:>+6.1f} {vs_random:>8.3f} {vs_prev:>8.3f} {elapsed:>6.1f}"
         )

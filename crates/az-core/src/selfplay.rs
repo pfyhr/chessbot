@@ -42,6 +42,13 @@ pub struct Trajectory<G: Game> {
     /// Winner, or `None` for a draw.
     pub winner: Option<Player>,
     pub plies: usize,
+    /// False if the game was cut short by the ply limit rather than decided by
+    /// the rules.
+    ///
+    /// The distinction matters for training: a truncated game has *no known
+    /// result*. Recording it as a draw invents a label, and the value head then
+    /// learns that invention.
+    pub decided: bool,
 }
 
 struct Slot<G: Game> {
@@ -72,6 +79,7 @@ pub struct SelfPlay<G: Game> {
     second_wins: usize,
     draws: usize,
     total_plies: usize,
+    truncated: usize,
 }
 
 impl<G: Game> SelfPlay<G> {
@@ -112,6 +120,7 @@ impl<G: Game> SelfPlay<G> {
             second_wins: 0,
             draws: 0,
             total_plies: 0,
+            truncated: 0,
         }
     }
 
@@ -212,6 +221,8 @@ impl<G: Game> SelfPlay<G> {
     }
 
     fn finish_game(&mut self, i: usize, outcome: Option<Outcome>) {
+        // `None` here means the ply limit stopped the game, not that it was drawn.
+        let decided = outcome.is_some();
         let final_mover = self.slots[i].pos.player_to_move();
         let winner = match outcome {
             Some(Outcome::Loss) => Some(final_mover.other()),
@@ -236,10 +247,14 @@ impl<G: Game> SelfPlay<G> {
             None => self.draws += 1,
         }
         self.total_plies += plies;
+        if !decided {
+            self.truncated += 1;
+        }
         self.finished.push(Trajectory {
             samples,
             winner,
             plies,
+            decided,
         });
         self.games_completed += 1;
 
@@ -278,6 +293,11 @@ impl<G: Game> SelfPlay<G> {
             self.draws,
             self.total_plies as f64 / n as f64,
         )
+    }
+
+    /// How many finished games ran out of plies instead of reaching a result.
+    pub fn truncated(&self) -> usize {
+        self.truncated
     }
 
     pub fn take_finished(&mut self) -> Vec<Trajectory<G>> {

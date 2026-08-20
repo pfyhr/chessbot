@@ -103,14 +103,25 @@ def losses(
     wdl_logits: torch.Tensor,
     policy_target: torch.Tensor,
     z: torch.Tensor,
+    value_mask: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Cross-entropy against the search's improved policy, and against the result.
 
     The policy target is a full distribution, not a label, so this is a soft
     cross-entropy: -sum(target * log_softmax(logits)). Illegal moves carry zero
     target mass and therefore contribute nothing.
+
+    `value_mask` zeroes the value term for positions whose game was stopped by the
+    ply limit. Those games have no result, so `z` there is invented; training on it
+    teaches the value head an outcome that never happened.
+
+    The *policy* target survives truncation untouched. The search's improved policy
+    is a statement about the position, not about how the game later ended.
     """
     logp = F.log_softmax(policy_logits, dim=-1)
     policy_loss = -(policy_target * logp).sum(dim=-1).mean()
-    value_loss = F.cross_entropy(wdl_logits, z_to_wdl_target(z))
-    return policy_loss, value_loss
+
+    per_position = F.cross_entropy(wdl_logits, z_to_wdl_target(z), reduction="none")
+    if value_mask is None:
+        return policy_loss, per_position.mean()
+    return policy_loss, (per_position * value_mask).sum() / value_mask.sum().clamp(min=1.0)
