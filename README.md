@@ -185,7 +185,7 @@ python3 -m venv .venv
 
 cargo build --release
 cargo test --release
-.venv/bin/python -m pytest tests/ -v
+.venv/bin/python -m pytest tests/ -v          # 46 tests, no PYTHONPATH needed
 ```
 
 Always build in release. Debug builds are 20–50x slower and any timing from one is

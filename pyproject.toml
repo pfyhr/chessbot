@@ -20,3 +20,9 @@ features = ["extension-module"]
 # Build in release even for `maturin develop`: a debug-build core is 20-50x
 # slower and would make every throughput number meaningless.
 profile = "release"
+
+[tool.pytest.ini_options]
+# The `chessbot` package lives under python/ rather than at the repo root, so put
+# it on the path here instead of requiring PYTHONPATH on every invocation.
+pythonpath = ["python"]
+testpaths = ["tests"]
