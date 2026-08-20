@@ -154,7 +154,7 @@ def main() -> None:
 
     header = (
         f"{'gen':>4} {'games':>6} {'plies':>6} {'p_loss':>8} {'v_loss':>7} "
-        f"{'mate':>6} {'defend':>7} {'open':>6} {'vs-rand':>8} {'vs-prev':>8} {'sec':>6}"
+        f"{'mate':>6} {'defend':>7} {'open':>6} {'mat':>6} {'vs-rand':>8} {'vs-prev':>8} {'sec':>6}"
     )
     print(header)
     print("-" * len(header))
@@ -169,6 +169,9 @@ def main() -> None:
         net.eval()
         tac = ev.tactic_accuracy(net, tactics, device)
         opening = ev.opening_mass(net, device)
+        # The sensitive early signal: win/loss stays at 0.5 for a long time
+        # because a weak net cannot force mate, but material moves immediately.
+        mat = ev.material_vs_random(net, args.eval_games, device, seed=gen, plies=60)
         vs_random = ev.play_match(
             net, net, args.eval_games, device, seed=gen, opponent_random=True
         )["score"]
@@ -184,7 +187,8 @@ def main() -> None:
             "evaluations": stats["evaluations"], "white_wins": stats["white_wins"],
             "black_wins": stats["black_wins"], "draws": stats["draws"], **losses_,
             "mate": tac["mate"], "defend": tac["defend"], "tactics": tac["all"],
-            "opening": opening, "vs_random": vs_random, "vs_prev": vs_prev,
+            "opening": opening, "material": mat["material"],
+            "vs_random": vs_random, "vs_prev": vs_prev,
             "seconds": elapsed,
         })
 
@@ -192,7 +196,7 @@ def main() -> None:
             f"{gen:>4} {stats['games']:>6} {stats['mean_plies']:>6.0f} "
             f"{losses_['policy_loss']:>8.4f} {losses_['value_loss']:>7.4f} "
             f"{tac['mate']:>6.3f} {tac['defend']:>7.3f} {opening:>6.3f} "
-            f"{vs_random:>8.3f} {vs_prev:>8.3f} {elapsed:>6.1f}"
+            f"{mat['material']:>+6.1f} {vs_random:>8.3f} {vs_prev:>8.3f} {elapsed:>6.1f}"
         )
 
         previous = copy.deepcopy(net).eval()

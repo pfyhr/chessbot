@@ -311,6 +311,101 @@ def play_match(
     }
 
 
+# --- material, the sensitive early signal -----------------------------------
+
+PIECE_VALUE = {"p": 1, "n": 3, "b": 3, "r": 5, "q": 9, "k": 0}
+
+
+def material(fen: str) -> int:
+    """White material minus black, in pawns."""
+    total = 0
+    for c in fen.split()[0]:
+        if c.isalpha():
+            v = PIECE_VALUE[c.lower()]
+            total += v if c.isupper() else -v
+    return total
+
+
+def material_vs_random(
+    net,
+    games: int,
+    device: str,
+    seed: int = 0,
+    plies: int = 80,
+    sims: int = 0,
+    opening_plies: int = 2,
+) -> dict[str, float]:
+    """Mean material advantage over a random opponent after `plies`.
+
+    Win/loss against a random player is a poor early signal in chess: a weak net
+    cannot force mate, so almost everything is a draw by the ply cap and the
+    number sits at 0.5 while the network is plainly improving. Material is
+    continuous, in-distribution, and moves as soon as the net stops hanging
+    pieces -- long before it can finish a game.
+
+    It is also the right complement to the mate suites, which are drawn from
+    random walks and are therefore a hard out-of-distribution probe.
+    """
+    rng = np.random.default_rng(seed)
+    boards = [cc.Position() for _ in range(games)]
+    net_white = np.arange(games) % 2 == 0
+    done = np.zeros(games, dtype=bool)
+    decided = np.zeros(games)
+
+    for i in range(games):
+        for _ in range(opening_plies):
+            moves, outcome = boards[i].expand()
+            if outcome is not None or not moves:
+                break
+            boards[i] = boards[i].after(moves[rng.integers(len(moves))])
+        if boards[i].outcome() is not None:
+            done[i] = True
+
+    for _ in range(plies):
+        live = np.where(~done)[0]
+        if len(live) == 0:
+            break
+        net_to_move = np.array([boards[i].turn == "white" for i in live]) == net_white[live]
+
+        for is_net in (True, False):
+            idx = live[net_to_move == is_net]
+            if len(idx) == 0:
+                continue
+            positions = [boards[i] for i in idx]
+            if is_net:
+                picks = (
+                    search_moves(net, positions, device, sims, int(rng.integers(1 << 30)))
+                    if sims > 0
+                    else best_moves(net, positions, device)
+                )
+            else:
+                picks = [
+                    p.legal_moves()[rng.integers(len(p.legal_moves()))] for p in positions
+                ]
+            for i, mv in zip(idx, picks):
+                boards[i] = boards[i].after(mv)
+
+        for i in live:
+            outcome = boards[i].outcome()
+            if outcome is None:
+                continue
+            done[i] = True
+            if outcome != "draw":
+                loser_is_white = boards[i].turn == "white"
+                decided[i] = 1.0 if (not loser_is_white) == net_white[i] else -1.0
+
+    balances = []
+    for i in range(games):
+        m = material(boards[i].fen())
+        balances.append(m if net_white[i] else -m)
+
+    return {
+        "material": float(np.mean(balances)),
+        "wins": int((decided > 0).sum()),
+        "losses": int((decided < 0).sum()),
+    }
+
+
 def elo_from_score(score: float) -> float:
     score = min(max(score, 1e-4), 1 - 1e-4)
     return -400.0 * np.log10(1.0 / score - 1.0)

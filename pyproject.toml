@@ -18,6 +18,7 @@ c4-play = "chessbot.play_connect4:main"
 c4-train = "chessbot.train_connect4:main"
 c4-report = "chessbot.connect4_report:main"
 chess-train = "chessbot.train_chess:main"
+chess-report = "chessbot.chess_report:main"
 
 [tool.maturin]
 manifest-path = "crates/az-py/Cargo.toml"
