@@ -1,11 +1,17 @@
 //! The chess side of the bridge: positions, encodings and batch primitives.
 
 use az_core::chess::ChessPos;
+use az_core::game::obs_len;
 use az_core::game::{Game, Outcome};
-use ndarray::{Array3, Array4};
-use numpy::{IntoPyArray, PyArray1, PyArray3, PyArray4};
+use az_core::mcts::{Config, Rng, Search, Status};
+use az_core::selfplay::SelfPlay;
+use ndarray::{Array1, Array2, Array3, Array4};
+use numpy::{
+    IntoPyArray, PyArray1, PyArray2, PyArray3, PyArray4, PyReadonlyArray1, PyReadonlyArray2,
+};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use shakmaty::uci::UciMove;
 use shakmaty::Move;
 
@@ -207,4 +213,230 @@ pub(crate) fn legal_mask_batch<'py>(
     ndarray::Array2::from_shape_vec((n, len), buf)
         .map(|a| a.into_pyarray(py))
         .map_err(|e| PyValueError::new_err(e.to_string()))
+}
+
+// ---------------------------------------------------------------------------
+// Self-play driver
+// ---------------------------------------------------------------------------
+
+const OBS: usize = 119 * 64;
+
+/// `(obs, policy, z)` as handed to the training loop.
+type TrainingArrays<'py> = (
+    Bound<'py, PyArray4<f32>>,
+    Bound<'py, PyArray2<f32>>,
+    Bound<'py, PyArray1<f32>>,
+);
+
+/// Batched chess self-play.
+///
+/// Identical in shape to the Connect4 driver, because it is the same driver --
+/// `az_core::selfplay` is generic over the `Game` trait. Everything the Connect4
+/// run proved about the loop carries over unchanged.
+#[pyclass(name = "ChessSelfPlay", module = "chessbot_core")]
+pub struct PyChessSelfPlay {
+    inner: SelfPlay<ChessPos>,
+    obs: Vec<f32>,
+    batch: usize,
+}
+
+#[pymethods]
+impl PyChessSelfPlay {
+    #[new]
+    #[pyo3(signature = (concurrency, total_games, sims=32, max_considered=16, max_plies=240, seed=0))]
+    fn new(
+        concurrency: usize,
+        total_games: usize,
+        sims: u32,
+        max_considered: usize,
+        max_plies: usize,
+        seed: u64,
+    ) -> Self {
+        let cfg = Config {
+            sims,
+            max_considered,
+            ..Config::default()
+        };
+        Self {
+            inner: SelfPlay::new(concurrency, total_games, cfg, max_plies, seed),
+            obs: Vec::new(),
+            batch: 0,
+        }
+    }
+
+    /// Step every live game to its next leaf; `None` once all games are done.
+    fn next_batch<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyArray4<f32>>>> {
+        let obs = &mut self.obs;
+        let inner = &mut self.inner;
+        let n = py.detach(|| inner.next_batch(obs));
+        self.batch = n;
+        if n == 0 {
+            return Ok(None);
+        }
+        Array4::from_shape_vec((n, 119, 8, 8), self.obs.clone())
+            .map(|a| Some(a.into_pyarray(py)))
+            .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    /// Feed back one forward pass: `logits` is `(N, 4672)`, `values` is `(N,)`.
+    fn submit(
+        &mut self,
+        logits: PyReadonlyArray2<f32>,
+        values: PyReadonlyArray1<f32>,
+    ) -> PyResult<()> {
+        let logits = logits.as_slice()?;
+        let values = values.as_slice()?;
+        if values.len() != self.batch {
+            return Err(PyValueError::new_err(format!(
+                "expected {} values, got {}",
+                self.batch,
+                values.len()
+            )));
+        }
+        self.inner.submit(logits, values);
+        Ok(())
+    }
+
+    fn is_done(&self) -> bool {
+        self.inner.is_done()
+    }
+
+    #[getter]
+    fn games_completed(&self) -> usize {
+        self.inner.games_completed()
+    }
+
+    /// Drain finished games as `(obs, policy, z)`.
+    ///
+    /// The policy target is dense over all 4672 slots, which is 18 KB per position
+    /// -- large, but it is the shape the loss wants and the buffer is drained every
+    /// generation.
+    fn take_training_data<'py>(&mut self, py: Python<'py>) -> PyResult<TrainingArrays<'py>> {
+        let trajectories = self.inner.take_finished();
+        let m: usize = trajectories.iter().map(|t| t.samples.len()).sum();
+
+        let mut obs = vec![0.0f32; m * OBS];
+        let mut policy = vec![0.0f32; m * 4672];
+        let mut z = vec![0.0f32; m];
+
+        let mut i = 0;
+        for t in &trajectories {
+            for s in &t.samples {
+                s.pos.encode(&mut obs[i * OBS..(i + 1) * OBS]);
+                for &(idx, p) in &s.policy {
+                    policy[i * 4672 + idx as usize] = p;
+                }
+                z[i] = s.z;
+                i += 1;
+            }
+        }
+
+        Ok((
+            Array4::from_shape_vec((m, 119, 8, 8), obs)
+                .map_err(|e| PyValueError::new_err(e.to_string()))?
+                .into_pyarray(py),
+            Array2::from_shape_vec((m, 4672), policy)
+                .map_err(|e| PyValueError::new_err(e.to_string()))?
+                .into_pyarray(py),
+            Array1::from_vec(z).into_pyarray(py),
+        ))
+    }
+
+    /// Cumulative statistics. Reading these consumes nothing.
+    fn stats<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let (white, black, draws, mean_plies) = self.inner.stats();
+        let d = PyDict::new(py);
+        d.set_item("games", self.inner.games_completed())?;
+        d.set_item("white_wins", white)?;
+        d.set_item("black_wins", black)?;
+        d.set_item("draws", draws)?;
+        d.set_item("mean_plies", mean_plies)?;
+        d.set_item("evaluations", self.inner.evaluations())?;
+        Ok(d)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Batched search over arbitrary positions
+// ---------------------------------------------------------------------------
+
+#[pyclass(name = "ChessSearch", module = "chessbot_core")]
+pub struct PyChessSearch {
+    searches: Vec<Search<ChessPos>>,
+    obs: Vec<f32>,
+    batch_idx: Vec<usize>,
+}
+
+#[pymethods]
+impl PyChessSearch {
+    /// One independent search per position, all sharing the network batches.
+    #[new]
+    #[pyo3(signature = (positions, sims=32, max_considered=16, seed=0))]
+    fn new(positions: Vec<PyPosition>, sims: u32, max_considered: usize, seed: u64) -> Self {
+        let cfg = Config {
+            sims,
+            max_considered,
+            ..Config::default()
+        };
+        let mut rng = Rng::new(seed);
+        let searches = positions
+            .into_iter()
+            .map(|p| Search::new(p.inner, cfg, &mut rng))
+            .collect();
+        Self {
+            searches,
+            obs: Vec::new(),
+            batch_idx: Vec::new(),
+        }
+    }
+
+    fn next_batch<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyArray4<f32>>>> {
+        self.obs.clear();
+        self.batch_idx.clear();
+        let len = obs_len::<ChessPos>();
+
+        for i in 0..self.searches.len() {
+            if self.searches[i].prepare() == Status::NeedsEval {
+                let start = self.obs.len();
+                self.obs.resize(start + len, 0.0);
+                self.searches[i].pending().encode(&mut self.obs[start..]);
+                self.batch_idx.push(i);
+            }
+        }
+
+        let n = self.batch_idx.len();
+        if n == 0 {
+            return Ok(None);
+        }
+        Array4::from_shape_vec((n, 119, 8, 8), self.obs.clone())
+            .map(|a| Some(a.into_pyarray(py)))
+            .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    fn submit(
+        &mut self,
+        logits: PyReadonlyArray2<f32>,
+        values: PyReadonlyArray1<f32>,
+    ) -> PyResult<()> {
+        let logits = logits.as_slice()?;
+        let values = values.as_slice()?;
+        for (k, &i) in self.batch_idx.iter().enumerate() {
+            self.searches[i].apply(&logits[k * 4672..(k + 1) * 4672], values[k]);
+        }
+        Ok(())
+    }
+
+    /// Best move per position as UCI, in the order they were given.
+    fn moves(&self) -> Vec<String> {
+        self.searches
+            .iter()
+            .map(|s| UciMove::from_standard(s.result().0).to_string())
+            .collect()
+    }
+
+    /// Root value estimates after search, from each root mover's perspective.
+    fn values<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f32>> {
+        let v: Vec<f32> = self.searches.iter().map(|s| s.root_value()).collect();
+        Array1::from_vec(v).into_pyarray(py)
+    }
 }

@@ -26,6 +26,8 @@ use pyo3::prelude::*;
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<chess::PyPosition>()?;
+    m.add_class::<chess::PyChessSelfPlay>()?;
+    m.add_class::<chess::PyChessSearch>()?;
     m.add_function(wrap_pyfunction!(chess::encode_batch, m)?)?;
     m.add_function(wrap_pyfunction!(chess::legal_mask_batch, m)?)?;
 
