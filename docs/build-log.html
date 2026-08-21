@@ -372,9 +372,10 @@
     <div class="eyebrow">Rust &middot; PyTorch &middot; Apple&nbsp;Silicon</div>
     <h1>An AlphaZero chess engine, built by measurement</h1>
     <p class="lede col">
-      Five phases in. The reinforcement-learning loop is finished and proven — on
-      Connect4, deliberately, because a broken loop there is loud, while on chess it
-      would read as &ldquo;learning is slow&rdquo; for weeks. Chess is next.
+      The reinforcement-learning loop is built, proven on Connect4, and now running on
+      chess: ten hours of self-play takes a randomly initialised network to
+      <strong>+531&nbsp;Elo</strong> over its own starting point. Most of the work has been
+      finding out which measurements were lying.
     </p>
 
     <div class="tiles">
@@ -389,14 +390,14 @@
         <small>of encode + forward</small>
       </div>
       <div class="tile">
-        <small>Connect4 loop, 40 generations</small>
-        <span class="fig">14<span class="unit">min</span></span>
-        <small>10,240 games &middot; 6.3M evals</small>
+        <small>Chess self-play, 10 hours</small>
+        <span class="fig">37k<span class="unit">games</span></span>
+        <small>145 generations &middot; 199M evals</small>
       </div>
       <div class="tile">
-        <small>Last generation vs first</small>
-        <span class="fig">+368<span class="unit">Elo</span></span>
-        <small>400 games, search on</small>
+        <small>Chess, final vs initial network</small>
+        <span class="fig">+531<span class="unit">Elo</span></span>
+        <small>200 games, search on</small>
       </div>
     </div>
   </header>
@@ -577,7 +578,125 @@
   </section>
 
   <section>
-    <div class="sec-head"><span class="eyebrow">04</span><h2>Decisions made by measurement</h2></div>
+    <div class="sec-head"><span class="eyebrow">04</span><h2>Chess, and a controlled experiment</h2></div>
+    <div class="col stack">
+      <p>
+        The same loop pointed at chess. Two configurations were then run for
+        <strong>ten hours each</strong>, concurrently on one GPU so they contend equally.
+        They differ in one thing: what happens to a self-play game that has not finished
+        when the ply limit arrives.
+      </p>
+      <p>
+        <strong>A</strong> stops at 200 plies and records a draw &mdash; a result nothing in
+        the game justifies. <strong>B</strong> allows 400 plies and, for whatever still runs
+        out, drops those positions from the value loss rather than inventing a label.
+      </p>
+    </div>
+
+    <div class="panel" style="margin-top:18px">
+      <div class="panel-bar">
+        <div class="legend">
+          <span class="key"><span class="swatch" style="background:var(--s1)"></span>A &middot; 200-ply cap, draw recorded</span>
+          <span class="key"><span class="swatch" style="background:var(--s2)"></span>B &middot; 400-ply cap, label dropped</span>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div class="chart-host" id="mat-host">
+          <div class="chart-scroll"><svg id="mat" viewBox="0 0 960 360" role="img"
+            aria-label="Material advantage against a random opponent, rising over ten hours for both runs."></svg></div>
+          <div class="tip" id="mat-tip"></div>
+        </div>
+      </div>
+      <div class="panel-note"><small>
+        Material against a random opponent, in pawns. It is a <em>measurement</em> only &mdash;
+        the network never sees it, and nothing in training rewards it. Piece values are a human
+        heuristic; a network trained toward them would learn to hoard material rather than to
+        win, which is the opposite of the premise. Random against random reads &minus;0.06, so
+        the zero point is real.
+      </small></div>
+    </div>
+
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-bar">
+        <span class="eyebrow">Games stopped by the ply limit</span>
+        <span class="key muted">lower is better</span>
+      </div>
+      <div class="panel-body">
+        <div class="chart-host" id="tr-host">
+          <div class="chart-scroll"><svg id="tr" viewBox="0 0 960 300" role="img"
+            aria-label="Share of games cut off by the ply limit, falling sharply for run B."></svg></div>
+          <div class="tip" id="tr-tip"></div>
+        </div>
+      </div>
+      <div class="panel-note"><small>
+        The cap never moves during a run, so this is the network learning to finish games.
+        <strong>B falls from 17% to 3%</strong> &mdash; it converts won positions instead of
+        shuffling. A improves far less and stays above a third, because its tighter cap keeps
+        cutting games off whatever the network does.
+      </small></div>
+    </div>
+
+    <div class="row" style="margin-top:16px; align-items:stretch">
+      <div class="panel" style="flex:1 1 330px">
+        <div class="panel-bar"><span class="eyebrow">Ten hours, matched compute</span></div>
+        <div class="panel-body table-scroll">
+          <table>
+            <thead><tr><th></th><th>A</th><th>B</th></tr></thead>
+            <tbody>
+              <tr><td>generations</td><td>145</td><td>89</td></tr>
+              <tr><td>games</td><td class="win">37,120</td><td>22,784</td></tr>
+              <tr><td>evaluations</td><td>199M</td><td>190M</td></tr>
+              <tr><td>material</td><td class="win">+14.7</td><td>+9.1</td></tr>
+              <tr><td>vs random</td><td class="win">0.708</td><td>0.542</td></tr>
+              <tr><td>truncated</td><td>36%</td><td class="win">3%</td></tr>
+              <tr><td>Elo over own gen&nbsp;0</td><td class="win">+531</td><td>+241</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="panel-note"><small>
+          Evaluations match to within 5%, so this is a fair compute comparison &mdash; unlike an
+          earlier attempt that gave both arms 25 generations and silently handed A a 40%
+          discount, because its shorter games made a generation cheaper.
+        </small></div>
+      </div>
+
+      <div class="panel" style="flex:1 1 260px">
+        <div class="panel-bar"><span class="eyebrow">Improvement rate, final 3 hours</span></div>
+        <div class="panel-body">
+          <div class="eyebrow">A &middot; material per hour</div>
+          <span class="fig" style="font-size:1.5rem;font-weight:600;display:block;margin:5px 0 1px">+0.85</span>
+          <div class="eyebrow" style="margin-top:12px">B &middot; material per hour</div>
+          <span class="fig" style="font-size:1.5rem;font-weight:600;display:block;margin:5px 0 1px">+0.89</span>
+          <p style="margin-top:12px"><small class="muted">
+            Neither is flattening, and their recent rates are the same to within noise. A leads
+            by an offset it built early, not by improving faster now. The prediction that A
+            would stall on its corrupted value signal has, so far, no support.
+          </small></p>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-bar"><span class="eyebrow">The unresolved problem</span></div>
+      <div class="panel-body">
+        <div class="chart-host" id="op-host">
+          <div class="chart-scroll"><svg id="op" viewBox="0 0 960 260" role="img"
+            aria-label="Opening preference swinging wildly in both runs rather than converging."></svg></div>
+          <div class="tip" id="op-tip"></div>
+        </div>
+      </div>
+      <div class="panel-note"><small>
+        Policy mass on the four sound first moves, against a 0.200 random baseline (dashed).
+        Both runs <em>swing</em> rather than converge, and A ends near zero &mdash; actively
+        avoiding the moves it had learned to prefer at four hours. This was blamed on the
+        replay window and learning rate; both were changed for these runs and it happened
+        anyway, so that diagnosis was wrong and the cause is still unknown.
+      </small></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="eyebrow">05</span><h2>Decisions made by measurement</h2></div>
     <div class="col stack">
       <p>
         Three choices that would have gone the other way on intuition. Each is a committed
@@ -642,7 +761,7 @@
   </section>
 
   <section>
-    <div class="sec-head"><span class="eyebrow">05</span><h2>Three bugs worth the trouble</h2></div>
+    <div class="sec-head"><span class="eyebrow">06</span><h2>Three bugs worth the trouble</h2></div>
     <div class="stack" style="max-width:820px">
 
       <div class="bug">
@@ -686,7 +805,7 @@ after    tactics 0.347   centre <b>0.399</b>   vs-prev <b>0.740</b></pre>
   </section>
 
   <section>
-    <div class="sec-head"><span class="eyebrow">06</span><h2>Play it</h2></div>
+    <div class="sec-head"><span class="eyebrow">07</span><h2>Play it</h2></div>
     <div class="col stack">
       <p>
         Every generation is a saved checkpoint, so &ldquo;how good was it after N
@@ -721,7 +840,7 @@ after    tactics 0.347   centre <b>0.399</b>   vs-prev <b>0.740</b></pre>
   </section>
 
   <section>
-    <div class="sec-head"><span class="eyebrow">07</span><h2>How far is one laptop from 5,000 TPUs?</h2></div>
+    <div class="sec-head"><span class="eyebrow">08</span><h2>How far is one laptop from 5,000 TPUs?</h2></div>
     <div class="col stack">
       <p>
         AlphaZero played 44 million games in nine hours on 5,000 TPUs. That number is
@@ -1049,5 +1168,111 @@ after    tactics 0.347   centre <b>0.399</b>   vs-prev <b>0.740</b></pre>
   new MutationObserver(renderAll).observe(document.documentElement, {
     attributes: true, attributeFilter: ["data-theme"]
   });
+})();
+</script>
+
+<script>
+(function () {
+  "use strict";
+  const D = {"wc-capped": {"hours": [0.065, 0.306, 0.529, 0.746, 0.969, 1.191, 1.41, 1.628, 1.84, 2.062, 2.282, 2.492, 2.703, 2.919, 3.128, 3.331, 3.544, 3.754, 3.962, 4.171, 4.377, 4.579, 4.791, 4.995, 5.202, 5.406, 5.607, 5.816, 6.023, 6.224, 6.424, 6.622, 6.828, 7.031, 7.229, 7.43, 7.63, 7.828, 8.023, 8.231, 8.429, 8.63, 8.827, 9.028, 9.229, 9.428, 9.63, 9.827, 10.026], "material": [-1.75, -2.28, -1.43, -0.13, -3.65, 0.07, 0.12, -0.28, -0.38, 0.32, 1.75, 2.17, 1.58, 2.73, 3.2, 4.07, 3.98, 3.8, 4.43, 5.87, 5.82, 5.2, 5.6, 7.38, 5.73, 7.48, 7.1, 9.55, 7.15, 9.68, 9.15, 8.85, 10.02, 12.1, 11.62, 10.45, 11.38, 11.85, 12.43, 12.4, 12.13, 13.05, 12.73, 13.07, 12.32, 13.8, 13.32, 14.47, 14.65], "trunc": [42.6, 58.2, 53.5, 58.6, 57.8, 57.8, 48.4, 54.3, 50.4, 48.8, 54.7, 46.9, 54.7, 48.4, 53.9, 48.8, 44.5, 40.2, 47.3, 46.1, 42.6, 46.9, 48.0, 36.7, 44.9, 42.6, 42.2, 41.8, 44.1, 35.9, 40.6, 39.8, 37.9, 35.2, 40.6, 48.0, 32.8, 37.5, 36.3, 35.9, 33.2, 33.2, 34.4, 33.2, 37.5, 30.5, 31.2, 35.9, 36.3], "opening": [0.197, 0.325, 0.454, 0.465, 0.277, 0.285, 0.314, 0.529, 0.346, 0.492, 0.351, 0.451, 0.41, 0.289, 0.277, 0.234, 0.412, 0.416, 0.493, 0.516, 0.511, 0.565, 0.575, 0.458, 0.312, 0.192, 0.13, 0.056, 0.025, 0.012, 0.012, 0.005, 0.014, 0.012, 0.09, 0.259, 0.455, 0.419, 0.253, 0.074, 0.041, 0.056, 0.01, 0.023, 0.004, 0.004, 0.018, 0.013, 0.024], "defend": [0.235, 0.27, 0.285, 0.26, 0.295, 0.3, 0.315, 0.28, 0.295, 0.275, 0.31, 0.27, 0.3, 0.31, 0.32, 0.295, 0.295, 0.285, 0.32, 0.34, 0.31, 0.335, 0.345, 0.335, 0.33, 0.35, 0.37, 0.335, 0.3, 0.325, 0.36, 0.365, 0.335, 0.375, 0.37, 0.39, 0.345, 0.38, 0.365, 0.38, 0.4, 0.355, 0.34, 0.35, 0.31, 0.345, 0.33, 0.355, 0.375]}, "wc-masked": {"hours": [0.113, 0.511, 0.881, 1.244, 1.609, 1.971, 2.321, 2.67, 3.005, 3.35, 3.687, 4.019, 4.37, 4.708, 5.052, 5.384, 5.726, 6.07, 6.401, 6.738, 7.062, 7.39, 7.716, 8.035, 8.368, 8.69, 8.998, 9.316, 9.624, 9.936], "material": [-2.55, -2.32, -0.32, -0.42, 0.18, 0.7, -0.73, -2.15, 0.73, 0.92, 2.58, 1.32, 2.58, 2.87, 2.95, 2.38, 3.77, 3.87, 4.87, 5.73, 6.52, 6.37, 6.63, 8.37, 5.52, 9.95, 8.45, 8.65, 9.38, 9.08], "trunc": [16.8, 44.9, 27.3, 20.7, 28.1, 26.6, 13.7, 14.1, 10.9, 16.0, 14.1, 13.3, 13.3, 13.3, 19.5, 11.7, 9.8, 21.1, 12.1, 9.4, 8.2, 11.7, 10.2, 10.5, 10.2, 6.2, 6.6, 6.2, 4.7, 3.1], "opening": [0.158, 0.154, 0.153, 0.217, 0.449, 0.563, 0.746, 0.638, 0.556, 0.308, 0.238, 0.134, 0.058, 0.045, 0.096, 0.068, 0.239, 0.39, 0.467, 0.505, 0.733, 0.763, 0.75, 0.685, 0.541, 0.434, 0.487, 0.463, 0.431, 0.323], "defend": [0.2, 0.215, 0.245, 0.255, 0.225, 0.195, 0.275, 0.23, 0.29, 0.27, 0.305, 0.25, 0.295, 0.275, 0.255, 0.28, 0.285, 0.265, 0.275, 0.265, 0.305, 0.285, 0.28, 0.28, 0.315, 0.325, 0.325, 0.33, 0.345, 0.34]}};
+  const SVG = "http://www.w3.org/2000/svg";
+  const el = (n,a) => { const e = document.createElementNS(SVG,n); for (const k in a) e.setAttribute(k,a[k]); return e; };
+  const cv = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+  const ARMS = [
+    { key:"wc-capped", name:"A", colour:"--s1" },
+    { key:"wc-masked", name:"B", colour:"--s2" }
+  ];
+
+  function lineChart(svgId, tipId, hostId, field, opts) {
+    const svg = document.getElementById(svgId); svg.textContent = "";
+    const vb = svg.getAttribute("viewBox").split(" ").map(Number);
+    const W = vb[2], H = vb[3];
+    const P = { top:18, right:74, bottom:38, left:52 };
+    const xmax = 10.1;
+    const x = (h) => P.left + (h / xmax) * (W - P.left - P.right);
+    const y = (v) => P.top + (1 - (v - opts.min) / (opts.max - opts.min)) * (H - P.top - P.bottom);
+
+    opts.ticks.forEach((t) => {
+      svg.appendChild(el("line",{x1:P.left,y1:y(t),x2:W-P.right,y2:y(t),class:"grid-line"}));
+      const lab = el("text",{x:P.left-9,y:y(t)+4,class:"axis-text","text-anchor":"end"});
+      lab.textContent = opts.fmt ? opts.fmt(t) : t;
+      svg.appendChild(lab);
+    });
+    for (let h = 0; h <= 10; h += 2) {
+      const t = el("text",{x:x(h),y:H-P.bottom+19,class:"axis-text","text-anchor":"middle"});
+      t.textContent = h + "h"; svg.appendChild(t);
+    }
+    const xt = el("text",{x:(P.left+W-P.right)/2,y:H-6,class:"axis-text","text-anchor":"middle"});
+    xt.textContent = "wall clock"; svg.appendChild(xt);
+
+    if (opts.baseline !== undefined) {
+      svg.appendChild(el("line",{x1:P.left,y1:y(opts.baseline),x2:W-P.right,y2:y(opts.baseline),
+        stroke:cv("--muted"),"stroke-width":1,"stroke-dasharray":"4 4",opacity:.7}));
+      const b = el("text",{x:W-P.right+8,y:y(opts.baseline)+4,class:"dlabel",fill:cv("--muted")});
+      b.textContent = "random"; svg.appendChild(b);
+    }
+
+    ARMS.forEach((arm) => {
+      const hrs = D[arm.key].hours, vals = D[arm.key][field];
+      const d = vals.map((v,i) => `${i?"L":"M"}${x(hrs[i]).toFixed(1)},${y(v).toFixed(1)}`).join("");
+      svg.appendChild(el("path",{d:d,class:"series-line",stroke:cv(arm.colour)}));
+      const last = vals[vals.length-1];
+      const t = el("text",{x:W-P.right+8,y:y(last)+4,class:"dlabel",fill:cv(arm.colour)});
+      t.textContent = arm.name + "  " + (opts.fmt ? opts.fmt(last) : last);
+      svg.appendChild(t);
+    });
+
+    const focus = el("g",{opacity:0});
+    const vline = el("line",{y1:P.top,y2:H-P.bottom,stroke:cv("--hairline-2"),"stroke-width":1});
+    focus.appendChild(vline);
+    const dots = ARMS.map((a) => {
+      const c = el("circle",{r:4.5,fill:cv(a.colour),stroke:cv("--surface"),"stroke-width":2});
+      focus.appendChild(c); return c;
+    });
+    svg.appendChild(focus);
+
+    const hit = el("rect",{x:P.left,y:P.top,width:W-P.left-P.right,height:H-P.top-P.bottom,
+      fill:"transparent",style:"cursor:crosshair"});
+    svg.appendChild(hit);
+    const tip = document.getElementById(tipId), host = document.getElementById(hostId);
+
+    hit.addEventListener("mousemove", (ev) => {
+      const box = svg.getBoundingClientRect();
+      const hrs = ((ev.clientX - box.left)/box.width*W - P.left)/(W-P.left-P.right)*xmax;
+      focus.setAttribute("opacity",1);
+      vline.setAttribute("x1",x(hrs)); vline.setAttribute("x2",x(hrs));
+      let rows = "";
+      ARMS.forEach((arm,k) => {
+        const H2 = D[arm.key].hours;
+        let i = 0; while (i < H2.length-1 && Math.abs(H2[i+1]-hrs) < Math.abs(H2[i]-hrs)) i++;
+        const v = D[arm.key][field][i];
+        dots[k].setAttribute("cx", x(H2[i])); dots[k].setAttribute("cy", y(v));
+        rows += `<div class="tip-row"><span class="swatch" style="width:8px;height:8px;background:${cv(arm.colour)}"></span>`
+              + `<span>${arm.name}</span><span class="tip-val">${opts.fmt?opts.fmt(v):v}</span></div>`;
+      });
+      tip.innerHTML = `<div style="color:var(--muted);margin-bottom:3px">${hrs.toFixed(1)} hours</div>` + rows;
+      tip.classList.add("on");
+      const hb = host.getBoundingClientRect();
+      const px = (x(hrs)/W)*box.width + (box.left - hb.left);
+      const tw = tip.offsetWidth;
+      tip.style.left = Math.max(0, Math.min(hb.width-tw, px-tw/2)) + "px";
+      tip.style.top = "4px";
+    });
+    hit.addEventListener("mouseleave", () => { focus.setAttribute("opacity",0); tip.classList.remove("on"); });
+  }
+
+  function drawAll() {
+    lineChart("mat","mat-tip","mat-host","material",
+      {min:-4,max:16,ticks:[-4,0,4,8,12,16],baseline:0,fmt:(v)=>(v>0?"+":"")+v.toFixed(1)});
+    lineChart("tr","tr-tip","tr-host","trunc",
+      {min:0,max:60,ticks:[0,20,40,60],fmt:(v)=>v.toFixed(0)+"%"});
+    lineChart("op","op-tip","op-host","opening",
+      {min:0,max:0.8,ticks:[0,0.2,0.4,0.6,0.8],baseline:0.2,fmt:(v)=>v.toFixed(2)});
+  }
+
+  drawAll();
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", drawAll);
+  new MutationObserver(drawAll).observe(document.documentElement,{attributes:true,attributeFilter:["data-theme"]});
 })();
 </script>
