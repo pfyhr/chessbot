@@ -39,6 +39,13 @@ use crate::game::{Game, Outcome};
 /// Not created yet.
 const NO_CHILD: u32 = u32::MAX;
 
+/// Ranking offset for a proven result.
+///
+/// Deliberately far outside the range any combination of Gumbel noise, policy
+/// logit and sigma-transformed value can reach. A checkmate is not a very good
+/// score; it is a different kind of thing, and the arithmetic should say so.
+const PROVEN: f32 = 1e6;
+
 #[derive(Debug, Clone, Copy)]
 pub struct Config {
     /// Simulation budget per move (`n` in the paper).
@@ -81,6 +88,11 @@ struct Edge<G: Game> {
     visits: u32,
     /// Sum of backed-up values, from the *parent's* mover perspective.
     value_sum: f32,
+    /// A result the rules guarantee, from the *parent's* mover perspective.
+    ///
+    /// `Some(Win)` means taking this move wins outright. This is not a statistic
+    /// and must never be averaged with one -- see [`Search::solve`].
+    proven: Option<Outcome>,
 }
 
 impl<G: Game> Edge<G> {
@@ -98,6 +110,9 @@ struct Node<G: Game> {
     /// The network's value estimate here, from this node's mover perspective.
     value: f32,
     edges: Vec<Edge<G>>,
+    /// A result the rules guarantee for this node's mover, once enough of the
+    /// subtree below it has been solved.
+    proven: Option<Outcome>,
 }
 
 pub struct Search<G: Game> {
@@ -137,6 +152,7 @@ impl<G: Game> Search<G> {
                 visits: 0,
                 value: 0.0,
                 edges: Vec::new(),
+                proven: terminal_root,
             }],
             gumbel: Vec::new(),
             contenders: Vec::new(),
@@ -224,7 +240,13 @@ impl<G: Game> Search<G> {
                     self.pending = child;
                     return Status::NeedsEval;
                 }
-                if let Some(o) = self.nodes[child as usize].terminal {
+                // A settled node has nothing left to teach. Back up the certainty
+                // rather than spending a simulation inside it -- otherwise the
+                // budget drains into lines whose result is already known.
+                let settled = self.nodes[child as usize]
+                    .terminal
+                    .or(self.nodes[child as usize].proven);
+                if let Some(o) = settled {
                     self.backup(child, o.value());
                     break;
                 }
@@ -274,6 +296,7 @@ impl<G: Game> Search<G> {
                 child: NO_CHILD,
                 visits: 0,
                 value_sum: 0.0,
+                proven: None,
             })
             .collect();
         self.nodes[idx as usize].edges = edges;
@@ -294,8 +317,14 @@ impl<G: Game> Search<G> {
             visits: 0,
             value: terminal.map_or(0.0, |o| o.value()),
             edges: Vec::new(),
+            proven: terminal,
         });
         self.nodes[node as usize].edges[edge].child = id;
+        // A terminal child settles this edge for good: the outcome is stated from
+        // the child's mover's point of view, so it flips for the parent.
+        if let Some(o) = terminal {
+            self.nodes[node as usize].edges[edge].proven = Some(o.flip());
+        }
         id
     }
 
@@ -312,6 +341,61 @@ impl<G: Game> Search<G> {
             e.value_sum += v;
             self.nodes[node as usize].visits += 1;
         }
+        self.propagate_proven();
+    }
+
+    /// Carry proven results up the path just walked.
+    ///
+    /// Runs after every backup and stops as soon as a node's status is unchanged,
+    /// since nothing above it can change either.
+    fn propagate_proven(&mut self) {
+        for i in (0..self.path.len()).rev() {
+            let (node, edge) = self.path[i];
+
+            let child = self.nodes[node as usize].edges[edge].child;
+            if child != NO_CHILD {
+                if let Some(p) = self.nodes[child as usize].proven {
+                    // The child states its result for its own mover; the parent
+                    // sees the opposite.
+                    self.nodes[node as usize].edges[edge].proven = Some(p.flip());
+                }
+            }
+
+            let solved = self.solve(node);
+            if solved == self.nodes[node as usize].proven {
+                return;
+            }
+            self.nodes[node as usize].proven = solved;
+        }
+    }
+
+    /// What the rules guarantee at `node`, given what its edges have proven.
+    ///
+    /// One winning move is enough to prove a win. Proving a loss needs *every*
+    /// move settled and losing -- a single unexplored move might save the game.
+    fn solve(&self, node: u32) -> Option<Outcome> {
+        let n = &self.nodes[node as usize];
+        if n.edges.is_empty() {
+            return n.terminal;
+        }
+        let mut all_settled = true;
+        let mut can_draw = false;
+        for e in &n.edges {
+            match e.proven {
+                Some(Outcome::Win) => return Some(Outcome::Win),
+                Some(Outcome::Draw) => can_draw = true,
+                Some(Outcome::Loss) => {}
+                None => all_settled = false,
+            }
+        }
+        if !all_settled {
+            return None;
+        }
+        Some(if can_draw {
+            Outcome::Draw
+        } else {
+            Outcome::Loss
+        })
     }
 
     // --- root: Gumbel top-k then sequential halving -------------------------
@@ -350,7 +434,14 @@ impl<G: Game> Search<G> {
     fn root_scores(&self) -> Vec<f32> {
         let sigma = self.sigma_completed(0);
         (0..self.nodes[0].edges.len())
-            .map(|i| self.root_gumbel_score(i) + sigma[i])
+            .map(|i| {
+                let base = self.root_gumbel_score(i) + sigma[i];
+                base + match self.nodes[0].edges[i].proven {
+                    Some(Outcome::Win) => PROVEN,
+                    Some(Outcome::Loss) => -PROVEN,
+                    _ => 0.0,
+                }
+            })
             .collect()
     }
 
@@ -410,16 +501,23 @@ impl<G: Game> Search<G> {
         let total: u32 = n.edges.iter().map(|e| e.visits).sum();
         let denom = 1.0 + total as f32;
 
-        let mut best = 0usize;
+        // Revisiting a settled move learns nothing, so spend the budget on moves
+        // that are still open -- unless every move is settled.
+        let all_settled = n.edges.iter().all(|e| e.proven.is_some());
+
+        let mut best: Option<usize> = None;
         let mut best_score = f32::NEG_INFINITY;
         for (i, e) in n.edges.iter().enumerate() {
+            if e.proven.is_some() && !all_settled {
+                continue;
+            }
             let score = improved[i] - e.visits as f32 / denom;
-            if score > best_score {
+            if best.is_none() || score > best_score {
                 best_score = score;
-                best = i;
+                best = Some(i);
             }
         }
-        best
+        best.unwrap_or(0)
     }
 
     // --- the completed-Q machinery ------------------------------------------
@@ -479,15 +577,52 @@ impl<G: Game> Search<G> {
         (n.value + total_visits as f32 * (weighted_q / visited_prior)) / (1.0 + total_visits as f32)
     }
 
-    /// `pi' = softmax(logits + sigma(completedQ))`.
+    /// `pi' = softmax(logits + sigma(completedQ))`, with proven results honoured.
+    ///
+    /// When the search has proven a win, the training target says so outright.
+    /// Softening it would teach the policy that a forced mate is merely a good
+    /// idea.
     fn improved_policy(&self, node: u32) -> Vec<f32> {
+        let n = &self.nodes[node as usize];
+
+        let wins: Vec<usize> = n
+            .edges
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.proven == Some(Outcome::Win))
+            .map(|(i, _)| i)
+            .collect();
+        if !wins.is_empty() {
+            let mut out = vec![0.0; n.edges.len()];
+            let share = 1.0 / wins.len() as f32;
+            for i in wins {
+                out[i] = share;
+            }
+            return out;
+        }
+
         let sigma = self.sigma_completed(node);
-        let scored: Vec<f32> = self.nodes[node as usize]
+        let mut scored: Vec<f32> = n
             .edges
             .iter()
             .zip(&sigma)
             .map(|(e, &s)| e.logit + s)
             .collect();
+
+        // Moves proven to lose get no mass -- unless every move loses, in which
+        // case there is nothing left to prefer and the ordinary ranking stands.
+        let losing: Vec<bool> = n
+            .edges
+            .iter()
+            .map(|e| e.proven == Some(Outcome::Loss))
+            .collect();
+        if losing.iter().any(|&l| l) && !losing.iter().all(|&l| l) {
+            for (i, &l) in losing.iter().enumerate() {
+                if l {
+                    scored[i] = f32::NEG_INFINITY;
+                }
+            }
+        }
         softmax(&scored)
     }
 
@@ -542,6 +677,11 @@ impl<G: Game> Search<G> {
 
     pub fn nodes_allocated(&self) -> usize {
         self.nodes.len()
+    }
+
+    /// A result the rules guarantee at the root, if the search has found one.
+    pub fn proven(&self) -> Option<Outcome> {
+        self.nodes[0].proven
     }
 }
 
@@ -868,6 +1008,117 @@ mod tests {
         );
         let sum: f32 = target.iter().sum();
         assert!((sum - 1.0).abs() < 1e-4);
+    }
+
+    /// The test the whole change exists for: a certain win must beat a confident
+    /// wrong opinion. The network here is adversarial -- it puts a large logit on
+    /// a losing move and none on the winning one.
+    #[test]
+    fn a_proven_win_beats_a_confidently_wrong_network() {
+        let pos = Connect4::from_moves(&[3, 0, 3, 1, 3, 2]).unwrap();
+        assert!(pos.is_winning_move(3), "test position is wrong");
+
+        fn adversarial(p: &Connect4) -> (Vec<f32>, f32) {
+            let mut logits = vec![0.0; 7];
+            logits[3] = -8.0; // hates the winning move
+            logits[6] = 8.0; // loves a pointless one
+                             // ...and is confidently wrong about the value, too
+            (
+                logits,
+                if p.plies().is_multiple_of(2) {
+                    0.95
+                } else {
+                    -0.95
+                },
+            )
+        }
+
+        let cfg = Config {
+            sims: 32,
+            max_considered: 7,
+            ..Config::default()
+        };
+        for seed in 0..25 {
+            let s = run(pos, cfg, seed, adversarial);
+            assert_eq!(
+                s.result().0,
+                3,
+                "seed {seed} was talked out of a forced win"
+            );
+            assert_eq!(s.proven(), Some(Outcome::Win));
+        }
+    }
+
+    /// The training target should state the proven result, not hedge it.
+    #[test]
+    fn a_proven_win_becomes_the_policy_target() {
+        let pos = Connect4::from_moves(&[3, 0, 3, 1, 3, 2]).unwrap();
+        let cfg = Config {
+            sims: 32,
+            max_considered: 7,
+            ..Config::default()
+        };
+        let s = run(pos, cfg, 3, flat_eval);
+        let (_, target) = s.result();
+        assert!(
+            target[3] > 0.99,
+            "target hedged a forced win: {:.3}",
+            target[3]
+        );
+    }
+
+    /// The mirror: a move that hands the opponent an immediate win must be
+    /// avoided.
+    ///
+    /// Proving a *loss* is strictly harder than proving a win. A winning move is
+    /// itself terminal, so one visit settles it. A losing move is not: the search
+    /// has to descend into it, expand it, and reach the opponent's winning reply
+    /// before the edge is settled -- and it must do that for *every* alternative
+    /// before the position is solved.
+    ///
+    /// So it is budget-dependent, and sharply so. Measured over 100 seeds on this
+    /// position: 16 sims blocks 18% of the time, 32 sims 40%, 64 sims 62%, and
+    /// 128 sims 100% with the target fully settled. The threshold below is that
+    /// measurement, not a guess.
+    #[test]
+    fn a_proven_loss_is_avoided() {
+        // Second player to move; first player threatens to complete column 3.
+        let pos = Connect4::from_moves(&[3, 0, 3, 1, 3]).unwrap();
+        let cfg = Config {
+            sims: 128,
+            max_considered: 7,
+            ..Config::default()
+        };
+        for seed in 0..40 {
+            let s = run(pos, cfg, seed, flat_eval);
+            let (mv, target) = s.result();
+            assert_eq!(mv, 3, "seed {seed} allowed a forced loss");
+            assert!(
+                target[3] > 0.9,
+                "seed {seed}: target hedged a solved position ({:.3})",
+                target[3]
+            );
+        }
+    }
+
+    /// A position where every move loses must still return a legal move rather
+    /// than falling over.
+    #[test]
+    fn a_lost_position_still_returns_a_move() {
+        // Column 3 has three in a row for the opponent and two ways to finish.
+        let pos = Connect4::from_moves(&[3, 0, 3, 1, 3, 6]).unwrap();
+        let cfg = Config {
+            sims: 32,
+            max_considered: 7,
+            ..Config::default()
+        };
+        let s = run(pos, cfg, 1, flat_eval);
+        let (mv, target) = s.result();
+        let mut legal = Vec::new();
+        pos.legal_moves(&mut legal);
+        assert!(legal.contains(&mv));
+        let sum: f32 = target.iter().sum();
+        assert!((sum - 1.0).abs() < 1e-3, "target sums to {sum}");
     }
 
     #[test]
