@@ -28,12 +28,16 @@ Head to head, 200 games, randomised openings, 32 sims / 16 root actions for both
 |---|---|---:|---:|
 | pw-16 vs baseline | 100W 72L 28D | 0.570 | **+49** |
 | pw-32 vs baseline | 128W 42L 30D | 0.715 | **+160** |
+| pw-32 vs pw-16 | 110W 53L 37D | 0.642 | **+102** |
 
 ## Reading it
 
 **Proven-win propagation helps on its own, modestly.** pw-16 differs from the baseline in
 exactly one thing and gains +49 Elo. Its clearest effect is conversion: truncation falls
 36% → 19% and games shorten by 20 plies. The engine finishes what it starts.
+
+The three margins are mutually consistent: +160 against the baseline, +49 for proven-win
+alone, and +102 head to head between them.
 
 **Search width is the larger lever.** pw-32 nearly doubles the baseline's material and
 gains +160 Elo, with truncation down to 14% and games 40 plies shorter. It does this on

@@ -372,10 +372,10 @@
     <div class="eyebrow">Rust &middot; PyTorch &middot; Apple&nbsp;Silicon</div>
     <h1>An AlphaZero chess engine, built by measurement</h1>
     <p class="lede col">
-      The reinforcement-learning loop is built, proven on Connect4, and now running on
-      chess: ten hours of self-play takes a randomly initialised network to
-      <strong>+531&nbsp;Elo</strong> over its own starting point. Most of the work has been
-      finding out which measurements were lying.
+      The reinforcement-learning loop is built, proven on Connect4, and running on chess:
+      ten hours of self-play takes a randomly initialised network to <strong>+531&nbsp;Elo</strong>
+      over its own starting point, and two search fixes add <strong>+160</strong> on top of that.
+      Most of the work has been finding out which measurements were lying.
     </p>
 
     <div class="tiles">
@@ -578,41 +578,72 @@
   </section>
 
   <section>
-    <div class="sec-head"><span class="eyebrow">04</span><h2>Chess, and a controlled experiment</h2></div>
+    <div class="sec-head"><span class="eyebrow">04</span><h2>Chess</h2></div>
     <div class="col stack">
       <p>
-        The same loop pointed at chess. Two configurations were then run for
-        <strong>ten hours each</strong>, concurrently on one GPU so they contend equally.
-        They differ in one thing: what happens to a self-play game that has not finished
-        when the ply limit arrives.
-      </p>
-      <p>
-        <strong>A</strong> stops at 200 plies and records a draw &mdash; a result nothing in
-        the game justifies. <strong>B</strong> allows 400 plies and, for whatever still runs
-        out, drops those positions from the value loss rather than inventing a label.
+        Ten-hour runs, two at a time on one GPU so they contend equally. Each
+        configuration differs from the previous one by a single change.
       </p>
     </div>
 
-    <div class="panel" style="margin-top:18px">
+    <div class="row" style="margin-top:18px; align-items:stretch">
+      <div class="panel" style="flex:1 1 420px">
+        <div class="panel-bar"><span class="eyebrow">Ten hours each, matched compute</span></div>
+        <div class="panel-body table-scroll">
+          <table>
+            <thead><tr><th></th><th>baseline</th><th>+ proven&#8209;win</th><th>+ 32 actions</th></tr></thead>
+            <tbody>
+              <tr><td>material vs random</td><td>+14.7</td><td>+14.4</td><td class="win">+21.6</td></tr>
+              <tr><td>games truncated</td><td>36%</td><td>19%</td><td class="win">14%</td></tr>
+              <tr><td>mean game length</td><td>165</td><td>146</td><td class="win">123</td></tr>
+              <tr><td>evaluations</td><td>199M</td><td>175M</td><td>161M</td></tr>
+              <tr><td><strong>Elo vs baseline</strong></td><td>&mdash;</td><td class="win">+49</td><td class="win">+160</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="panel-note"><small>
+          200 games each, randomised openings, both sides searching identically. Head to head,
+          the wider search beats proven-win alone by <strong>+102 Elo</strong> &mdash; consistent
+          with the two baseline margins.
+        </small></div>
+      </div>
+
+      <div class="panel" style="flex:1 1 240px">
+        <div class="panel-bar"><span class="eyebrow">Mate in one, trained network</span></div>
+        <div class="panel-body">
+          <div class="eyebrow">Before proven-win</div>
+          <span class="fig" style="font-size:1.5rem;font-weight:600;display:block;margin:5px 0 1px">0.217</span>
+          <div class="eyebrow" style="margin-top:12px">After</div>
+          <span class="fig" style="font-size:1.5rem;font-weight:600;display:block;margin:5px 0 1px;color:var(--good)">1.000</span>
+          <p style="margin-top:12px"><small class="muted">
+            A <em>flat</em> network &mdash; uniform policy, zero value &mdash; scored 0.975 on the
+            same suite. Ten hours of training had made the engine worse at forced mates than
+            knowing nothing, because a certain +1 was being averaged against confident noise.
+          </small></p>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:16px">
       <div class="panel-bar">
         <div class="legend">
-          <span class="key"><span class="swatch" style="background:var(--s1)"></span>A &middot; 200-ply cap, draw recorded</span>
-          <span class="key"><span class="swatch" style="background:var(--s2)"></span>B &middot; 400-ply cap, label dropped</span>
+          <span class="key"><span class="swatch" style="background:var(--s1)"></span>baseline</span>
+          <span class="key"><span class="swatch" style="background:var(--s2)"></span>+ proven-win</span>
+          <span class="key"><span class="swatch" style="background:var(--s3)"></span>+ 32 root actions</span>
         </div>
       </div>
       <div class="panel-body">
         <div class="chart-host" id="mat-host">
-          <div class="chart-scroll"><svg id="mat" viewBox="0 0 960 360" role="img"
-            aria-label="Material advantage against a random opponent, rising over ten hours for both runs."></svg></div>
+          <div class="chart-scroll"><svg id="mat" viewBox="0 0 960 340" role="img"
+            aria-label="Material advantage against a random opponent over ten hours, for three configurations."></svg></div>
           <div class="tip" id="mat-tip"></div>
         </div>
       </div>
       <div class="panel-note"><small>
-        Material against a random opponent, in pawns. It is a <em>measurement</em> only &mdash;
-        the network never sees it, and nothing in training rewards it. Piece values are a human
-        heuristic; a network trained toward them would learn to hoard material rather than to
-        win, which is the opposite of the premise. Random against random reads &minus;0.06, so
-        the zero point is real.
+        Material against a random opponent, in pawns &mdash; a <em>measurement</em> only. The
+        network never sees it and nothing in training rewards it; piece values are a human
+        heuristic and a network trained toward them would learn to hoard rather than to win.
+        Random against random reads &minus;0.06.
       </small></div>
     </div>
 
@@ -623,75 +654,66 @@
       </div>
       <div class="panel-body">
         <div class="chart-host" id="tr-host">
-          <div class="chart-scroll"><svg id="tr" viewBox="0 0 960 300" role="img"
-            aria-label="Share of games cut off by the ply limit, falling sharply for run B."></svg></div>
+          <div class="chart-scroll"><svg id="tr" viewBox="0 0 960 260" role="img"
+            aria-label="Share of games cut off by the ply limit, falling across the three configurations."></svg></div>
           <div class="tip" id="tr-tip"></div>
         </div>
       </div>
       <div class="panel-note"><small>
-        The cap never moves during a run, so this is the network learning to finish games.
-        <strong>B falls from 17% to 3%</strong> &mdash; it converts won positions instead of
-        shuffling. A improves far less and stays above a third, because its tighter cap keeps
-        cutting games off whatever the network does.
+        The cap never moves during a run, so this is the network learning to finish games
+        rather than shuffle to the buzzer. It is also the clearest evidence the two changes
+        did what they were meant to.
       </small></div>
     </div>
 
     <div class="row" style="margin-top:16px; align-items:stretch">
       <div class="panel" style="flex:1 1 330px">
-        <div class="panel-bar"><span class="eyebrow">Ten hours, matched compute</span></div>
-        <div class="panel-body table-scroll">
-          <table>
-            <thead><tr><th></th><th>A</th><th>B</th></tr></thead>
-            <tbody>
-              <tr><td>generations</td><td>145</td><td>89</td></tr>
-              <tr><td>games</td><td class="win">37,120</td><td>22,784</td></tr>
-              <tr><td>evaluations</td><td>199M</td><td>190M</td></tr>
-              <tr><td>material</td><td class="win">+14.7</td><td>+9.1</td></tr>
-              <tr><td>vs random</td><td class="win">0.708</td><td>0.542</td></tr>
-              <tr><td>truncated</td><td>36%</td><td class="win">3%</td></tr>
-              <tr><td>Elo over own gen&nbsp;0</td><td class="win">+531</td><td>+241</td></tr>
-            </tbody>
-          </table>
+        <div class="panel-bar"><span class="eyebrow">What worked</span></div>
+        <div class="panel-body stack" style="gap:12px">
+          <div>
+            <h3>Proven-win propagation &nbsp;<span class="muted">+49 Elo</span></h3>
+            <p><small class="muted">
+              A terminal result is a fact, not a score. It was being min-max rescaled alongside
+              value estimates, so a certain checkmate beat a confidently wrong guess by 0.13 &mdash;
+              against Gumbel noise of &sigma;&nbsp;&asymp;&nbsp;1.28. Now it short-circuits.
+              This adds no chess knowledge: the rules already computed it.
+            </small></p>
+          </div>
+          <div>
+            <h3>Wider root search &nbsp;<span class="muted">+160 Elo</span></h3>
+            <p><small class="muted">
+              With 16 root actions and ~40 legal moves, the winning move is often never sampled.
+              Doubling to 32 wins on <em>fewer</em> evaluations. Gumbel's premise is that
+              considering few actions well beats considering many badly &mdash; which assumes a
+              shortlist worth trusting. A better network may flip this back.
+            </small></p>
+          </div>
         </div>
-        <div class="panel-note"><small>
-          Evaluations match to within 5%, so this is a fair compute comparison &mdash; unlike an
-          earlier attempt that gave both arms 25 generations and silently handed A a 40%
-          discount, because its shorter games made a generation cheaper.
-        </small></div>
       </div>
 
-      <div class="panel" style="flex:1 1 260px">
-        <div class="panel-bar"><span class="eyebrow">Improvement rate, final 3 hours</span></div>
-        <div class="panel-body">
-          <div class="eyebrow">A &middot; material per hour</div>
-          <span class="fig" style="font-size:1.5rem;font-weight:600;display:block;margin:5px 0 1px">+0.85</span>
-          <div class="eyebrow" style="margin-top:12px">B &middot; material per hour</div>
-          <span class="fig" style="font-size:1.5rem;font-weight:600;display:block;margin:5px 0 1px">+0.89</span>
-          <p style="margin-top:12px"><small class="muted">
-            Neither is flattening, and their recent rates are the same to within noise. A leads
-            by an offset it built early, not by improving faster now. The prediction that A
-            would stall on its corrupted value signal has, so far, no support.
-          </small></p>
+      <div class="panel" style="flex:1 1 330px">
+        <div class="panel-bar"><span class="eyebrow">What didn&rsquo;t</span></div>
+        <div class="panel-body stack" style="gap:12px">
+          <div>
+            <h3>Not inventing draws &nbsp;<span class="muted">&minus;70 Elo</span></h3>
+            <p><small class="muted">
+              Stopping a game at 200 plies and calling it a draw fabricates 36% of value labels.
+              Raising the cap and dropping those labels fixed exactly that &mdash; and lost. The
+              extra ~90 plies per game are a weak network shuffling in dead endgames, which is
+              worse data than an invented label.
+            </small></p>
+          </div>
+          <div>
+            <h3>Opening preference &nbsp;<span class="muted">unexplained</span></h3>
+            <p><small class="muted">
+              Policy mass on the sound first moves swings rather than converges, and often ends
+              <em>below</em> the 0.200 random baseline. Four hypotheses have failed: replay
+              window, learning rate, value-target quality, and search width. There is no working
+              theory.
+            </small></p>
+          </div>
         </div>
       </div>
-    </div>
-
-    <div class="panel" style="margin-top:16px">
-      <div class="panel-bar"><span class="eyebrow">The unresolved problem</span></div>
-      <div class="panel-body">
-        <div class="chart-host" id="op-host">
-          <div class="chart-scroll"><svg id="op" viewBox="0 0 960 260" role="img"
-            aria-label="Opening preference swinging wildly in both runs rather than converging."></svg></div>
-          <div class="tip" id="op-tip"></div>
-        </div>
-      </div>
-      <div class="panel-note"><small>
-        Policy mass on the four sound first moves, against a 0.200 random baseline (dashed).
-        Both runs <em>swing</em> rather than converge, and A ends near zero &mdash; actively
-        avoiding the moves it had learned to prefer at four hours. This was blamed on the
-        replay window and learning rate; both were changed for these runs and it happened
-        anyway, so that diagnosis was wrong and the cause is still unknown.
-      </small></div>
     </div>
   </section>
 
@@ -1174,30 +1196,27 @@ after    tactics 0.347   centre <b>0.399</b>   vs-prev <b>0.740</b></pre>
 <script>
 (function () {
   "use strict";
-  const D = {"wc-capped": {"hours": [0.065, 0.306, 0.529, 0.746, 0.969, 1.191, 1.41, 1.628, 1.84, 2.062, 2.282, 2.492, 2.703, 2.919, 3.128, 3.331, 3.544, 3.754, 3.962, 4.171, 4.377, 4.579, 4.791, 4.995, 5.202, 5.406, 5.607, 5.816, 6.023, 6.224, 6.424, 6.622, 6.828, 7.031, 7.229, 7.43, 7.63, 7.828, 8.023, 8.231, 8.429, 8.63, 8.827, 9.028, 9.229, 9.428, 9.63, 9.827, 10.026], "material": [-1.75, -2.28, -1.43, -0.13, -3.65, 0.07, 0.12, -0.28, -0.38, 0.32, 1.75, 2.17, 1.58, 2.73, 3.2, 4.07, 3.98, 3.8, 4.43, 5.87, 5.82, 5.2, 5.6, 7.38, 5.73, 7.48, 7.1, 9.55, 7.15, 9.68, 9.15, 8.85, 10.02, 12.1, 11.62, 10.45, 11.38, 11.85, 12.43, 12.4, 12.13, 13.05, 12.73, 13.07, 12.32, 13.8, 13.32, 14.47, 14.65], "trunc": [42.6, 58.2, 53.5, 58.6, 57.8, 57.8, 48.4, 54.3, 50.4, 48.8, 54.7, 46.9, 54.7, 48.4, 53.9, 48.8, 44.5, 40.2, 47.3, 46.1, 42.6, 46.9, 48.0, 36.7, 44.9, 42.6, 42.2, 41.8, 44.1, 35.9, 40.6, 39.8, 37.9, 35.2, 40.6, 48.0, 32.8, 37.5, 36.3, 35.9, 33.2, 33.2, 34.4, 33.2, 37.5, 30.5, 31.2, 35.9, 36.3], "opening": [0.197, 0.325, 0.454, 0.465, 0.277, 0.285, 0.314, 0.529, 0.346, 0.492, 0.351, 0.451, 0.41, 0.289, 0.277, 0.234, 0.412, 0.416, 0.493, 0.516, 0.511, 0.565, 0.575, 0.458, 0.312, 0.192, 0.13, 0.056, 0.025, 0.012, 0.012, 0.005, 0.014, 0.012, 0.09, 0.259, 0.455, 0.419, 0.253, 0.074, 0.041, 0.056, 0.01, 0.023, 0.004, 0.004, 0.018, 0.013, 0.024], "defend": [0.235, 0.27, 0.285, 0.26, 0.295, 0.3, 0.315, 0.28, 0.295, 0.275, 0.31, 0.27, 0.3, 0.31, 0.32, 0.295, 0.295, 0.285, 0.32, 0.34, 0.31, 0.335, 0.345, 0.335, 0.33, 0.35, 0.37, 0.335, 0.3, 0.325, 0.36, 0.365, 0.335, 0.375, 0.37, 0.39, 0.345, 0.38, 0.365, 0.38, 0.4, 0.355, 0.34, 0.35, 0.31, 0.345, 0.33, 0.355, 0.375]}, "wc-masked": {"hours": [0.113, 0.511, 0.881, 1.244, 1.609, 1.971, 2.321, 2.67, 3.005, 3.35, 3.687, 4.019, 4.37, 4.708, 5.052, 5.384, 5.726, 6.07, 6.401, 6.738, 7.062, 7.39, 7.716, 8.035, 8.368, 8.69, 8.998, 9.316, 9.624, 9.936], "material": [-2.55, -2.32, -0.32, -0.42, 0.18, 0.7, -0.73, -2.15, 0.73, 0.92, 2.58, 1.32, 2.58, 2.87, 2.95, 2.38, 3.77, 3.87, 4.87, 5.73, 6.52, 6.37, 6.63, 8.37, 5.52, 9.95, 8.45, 8.65, 9.38, 9.08], "trunc": [16.8, 44.9, 27.3, 20.7, 28.1, 26.6, 13.7, 14.1, 10.9, 16.0, 14.1, 13.3, 13.3, 13.3, 19.5, 11.7, 9.8, 21.1, 12.1, 9.4, 8.2, 11.7, 10.2, 10.5, 10.2, 6.2, 6.6, 6.2, 4.7, 3.1], "opening": [0.158, 0.154, 0.153, 0.217, 0.449, 0.563, 0.746, 0.638, 0.556, 0.308, 0.238, 0.134, 0.058, 0.045, 0.096, 0.068, 0.239, 0.39, 0.467, 0.505, 0.733, 0.763, 0.75, 0.685, 0.541, 0.434, 0.487, 0.463, 0.431, 0.323], "defend": [0.2, 0.215, 0.245, 0.255, 0.225, 0.195, 0.275, 0.23, 0.29, 0.27, 0.305, 0.25, 0.295, 0.275, 0.255, 0.28, 0.285, 0.265, 0.275, 0.265, 0.305, 0.285, 0.28, 0.28, 0.315, 0.325, 0.325, 0.33, 0.345, 0.34]}};
+  const D = {"wc-capped": {"hours": [0.06, 0.31, 0.53, 0.75, 0.97, 1.19, 1.41, 1.63, 1.84, 2.06, 2.28, 2.49, 2.7, 2.92, 3.13, 3.33, 3.54, 3.75, 3.96, 4.17, 4.38, 4.58, 4.79, 5.0, 5.2, 5.41, 5.61, 5.82, 6.02, 6.22, 6.42, 6.62, 6.83, 7.03, 7.23, 7.43, 7.63, 7.83, 8.02, 8.23, 8.43, 8.63, 8.83, 9.03, 9.23, 9.43, 9.63, 9.83, 10.03], "material": [-1.8, -2.3, -1.4, -0.1, -3.6, 0.1, 0.1, -0.3, -0.4, 0.3, 1.8, 2.2, 1.6, 2.7, 3.2, 4.1, 4.0, 3.8, 4.4, 5.9, 5.8, 5.2, 5.6, 7.4, 5.7, 7.5, 7.1, 9.6, 7.2, 9.7, 9.2, 8.8, 10.0, 12.1, 11.6, 10.4, 11.4, 11.8, 12.4, 12.4, 12.1, 13.1, 12.7, 13.1, 12.3, 13.8, 13.3, 14.5, 14.7], "trunc": [43, 58, 54, 59, 58, 58, 48, 54, 50, 49, 55, 47, 55, 48, 54, 49, 45, 40, 47, 46, 43, 47, 48, 37, 45, 43, 42, 42, 44, 36, 41, 40, 38, 35, 41, 48, 33, 38, 36, 36, 33, 33, 34, 33, 38, 30, 31, 36, 36]}, "pw-16": {"hours": [0.07, 0.31, 0.55, 0.79, 1.03, 1.32, 1.59, 1.83, 2.07, 2.31, 2.55, 2.79, 3.0, 3.22, 3.44, 3.66, 3.87, 4.1, 4.33, 4.54, 4.76, 4.99, 5.23, 5.47, 5.69, 5.91, 6.14, 6.35, 6.56, 6.76, 6.96, 7.16, 7.36, 7.56, 7.77, 7.97, 8.18, 8.38, 8.59, 8.81, 9.01, 9.21, 9.42, 9.62, 9.82, 10.02], "material": [-4.3, -3.8, -1.3, -2.5, -1.5, -1.1, 0.0, 0.2, 0.4, 1.3, 3.3, 3.4, 3.2, 1.8, 1.3, 3.2, 4.6, 3.9, 6.1, 4.8, 6.5, 7.2, 7.5, 8.8, 7.1, 8.4, 9.6, 9.3, 9.1, 12.6, 10.3, 11.1, 11.3, 11.7, 13.3, 13.7, 12.3, 14.8, 14.6, 11.6, 14.1, 14.7, 16.4, 15.7, 15.7, 14.4], "trunc": [40, 45, 62, 44, 48, 47, 52, 46, 41, 38, 42, 31, 36, 40, 36, 45, 34, 39, 42, 34, 34, 34, 38, 28, 27, 31, 28, 30, 29, 26, 27, 28, 27, 21, 23, 24, 30, 25, 20, 21, 27, 25, 20, 18, 17, 19]}, "pw-32": {"hours": [0.07, 0.29, 0.52, 0.75, 0.97, 1.22, 1.49, 1.71, 1.94, 2.17, 2.38, 2.6, 2.82, 3.03, 3.23, 3.43, 3.63, 3.83, 4.04, 4.24, 4.44, 4.64, 4.85, 5.06, 5.28, 5.5, 5.7, 5.92, 6.12, 6.32, 6.51, 6.71, 6.91, 7.1, 7.29, 7.48, 7.68, 7.87, 8.06, 8.25, 8.44, 8.64, 8.85, 9.04, 9.23, 9.42, 9.6, 9.79, 9.98], "material": [-0.2, -0.6, 2.3, 3.6, 3.9, 4.4, 6.6, 8.2, 8.9, 8.5, 9.8, 12.4, 10.7, 12.4, 11.1, 13.6, 13.6, 13.8, 15.8, 14.9, 12.3, 13.4, 17.4, 15.8, 17.6, 17.7, 16.2, 18.9, 15.7, 16.2, 15.8, 17.9, 16.3, 18.0, 19.4, 17.7, 20.8, 20.8, 20.6, 20.2, 21.8, 20.9, 21.3, 20.4, 20.2, 21.7, 21.5, 21.9, 21.6], "trunc": [28, 32, 36, 36, 36, 28, 25, 27, 24, 21, 23, 23, 27, 18, 25, 20, 20, 18, 20, 18, 18, 20, 17, 20, 19, 15, 20, 18, 17, 21, 25, 25, 24, 21, 18, 20, 19, 16, 17, 14, 17, 14, 19, 20, 21, 17, 14, 14, 14]}};
   const SVG = "http://www.w3.org/2000/svg";
   const el = (n,a) => { const e = document.createElementNS(SVG,n); for (const k in a) e.setAttribute(k,a[k]); return e; };
   const cv = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
-
   const ARMS = [
-    { key:"wc-capped", name:"A", colour:"--s1" },
-    { key:"wc-masked", name:"B", colour:"--s2" }
+    { key:"wc-capped", name:"baseline", colour:"--s1" },
+    { key:"pw-16",     name:"proven",   colour:"--s2" },
+    { key:"pw-32",     name:"+32",      colour:"--s3" }
   ];
 
-  function lineChart(svgId, tipId, hostId, field, opts) {
+  function chart(svgId, tipId, hostId, field, opts) {
     const svg = document.getElementById(svgId); svg.textContent = "";
     const vb = svg.getAttribute("viewBox").split(" ").map(Number);
-    const W = vb[2], H = vb[3];
-    const P = { top:18, right:74, bottom:38, left:52 };
-    const xmax = 10.1;
-    const x = (h) => P.left + (h / xmax) * (W - P.left - P.right);
-    const y = (v) => P.top + (1 - (v - opts.min) / (opts.max - opts.min)) * (H - P.top - P.bottom);
+    const W = vb[2], H = vb[3], P = { top:18, right:96, bottom:38, left:52 }, XMAX = 10.1;
+    const x = (h) => P.left + (h / XMAX) * (W - P.left - P.right);
+    const y = (v) => P.top + (1 - (v - opts.min)/(opts.max - opts.min)) * (H - P.top - P.bottom);
 
     opts.ticks.forEach((t) => {
       svg.appendChild(el("line",{x1:P.left,y1:y(t),x2:W-P.right,y2:y(t),class:"grid-line"}));
-      const lab = el("text",{x:P.left-9,y:y(t)+4,class:"axis-text","text-anchor":"end"});
-      lab.textContent = opts.fmt ? opts.fmt(t) : t;
-      svg.appendChild(lab);
+      const l = el("text",{x:P.left-9,y:y(t)+4,class:"axis-text","text-anchor":"end"});
+      l.textContent = opts.fmt(t); svg.appendChild(l);
     });
     for (let h = 0; h <= 10; h += 2) {
       const t = el("text",{x:x(h),y:H-P.bottom+19,class:"axis-text","text-anchor":"middle"});
@@ -1208,19 +1227,28 @@ after    tactics 0.347   centre <b>0.399</b>   vs-prev <b>0.740</b></pre>
 
     if (opts.baseline !== undefined) {
       svg.appendChild(el("line",{x1:P.left,y1:y(opts.baseline),x2:W-P.right,y2:y(opts.baseline),
-        stroke:cv("--muted"),"stroke-width":1,"stroke-dasharray":"4 4",opacity:.7}));
-      const b = el("text",{x:W-P.right+8,y:y(opts.baseline)+4,class:"dlabel",fill:cv("--muted")});
-      b.textContent = "random"; svg.appendChild(b);
+        stroke:cv("--muted"),"stroke-width":1,"stroke-dasharray":"4 4",opacity:.65}));
     }
 
-    ARMS.forEach((arm) => {
-      const hrs = D[arm.key].hours, vals = D[arm.key][field];
-      const d = vals.map((v,i) => `${i?"L":"M"}${x(hrs[i]).toFixed(1)},${y(v).toFixed(1)}`).join("");
-      svg.appendChild(el("path",{d:d,class:"series-line",stroke:cv(arm.colour)}));
-      const last = vals[vals.length-1];
-      const t = el("text",{x:W-P.right+8,y:y(last)+4,class:"dlabel",fill:cv(arm.colour)});
-      t.textContent = arm.name + "  " + (opts.fmt ? opts.fmt(last) : last);
-      svg.appendChild(t);
+    ARMS.forEach((a) => {
+      const hrs = D[a.key].hours, vals = D[a.key][field];
+      svg.appendChild(el("path",{d:vals.map((v,i)=>`${i?"L":"M"}${x(hrs[i]).toFixed(1)},${y(v).toFixed(1)}`).join(""),
+        class:"series-line", stroke:cv(a.colour)}));
+    });
+    // direct labels, pushed apart so close endpoints stay readable
+    const ends = ARMS.map((a) => {
+      const v = D[a.key][field][D[a.key][field].length-1];
+      return { a, v, y: y(v) };
+    }).sort((p,q) => p.y - q.y);
+    for (let i = 1; i < ends.length; i++)
+      if (ends[i].y - ends[i-1].y < 15) ends[i].y = ends[i-1].y + 15;
+    ends.forEach((e) => {
+      const trueY = y(e.v);
+      if (Math.abs(e.y - trueY) > 1)
+        svg.appendChild(el("path",{d:`M${W-P.right},${trueY.toFixed(1)}L${W-P.right+7},${e.y.toFixed(1)}`,
+          stroke:cv(e.a.colour),"stroke-width":1,fill:"none",opacity:.55}));
+      const t = el("text",{x:W-P.right+11,y:e.y+4,class:"dlabel",fill:cv(e.a.colour)});
+      t.textContent = opts.fmt(e.v) + " " + e.a.name; svg.appendChild(t);
     });
 
     const focus = el("g",{opacity:0});
@@ -1231,7 +1259,6 @@ after    tactics 0.347   centre <b>0.399</b>   vs-prev <b>0.740</b></pre>
       focus.appendChild(c); return c;
     });
     svg.appendChild(focus);
-
     const hit = el("rect",{x:P.left,y:P.top,width:W-P.left-P.right,height:H-P.top-P.bottom,
       fill:"transparent",style:"cursor:crosshair"});
     svg.appendChild(hit);
@@ -1239,23 +1266,22 @@ after    tactics 0.347   centre <b>0.399</b>   vs-prev <b>0.740</b></pre>
 
     hit.addEventListener("mousemove", (ev) => {
       const box = svg.getBoundingClientRect();
-      const hrs = ((ev.clientX - box.left)/box.width*W - P.left)/(W-P.left-P.right)*xmax;
+      const hrs = ((ev.clientX-box.left)/box.width*W - P.left)/(W-P.left-P.right)*XMAX;
       focus.setAttribute("opacity",1);
       vline.setAttribute("x1",x(hrs)); vline.setAttribute("x2",x(hrs));
       let rows = "";
-      ARMS.forEach((arm,k) => {
-        const H2 = D[arm.key].hours;
-        let i = 0; while (i < H2.length-1 && Math.abs(H2[i+1]-hrs) < Math.abs(H2[i]-hrs)) i++;
-        const v = D[arm.key][field][i];
-        dots[k].setAttribute("cx", x(H2[i])); dots[k].setAttribute("cy", y(v));
-        rows += `<div class="tip-row"><span class="swatch" style="width:8px;height:8px;background:${cv(arm.colour)}"></span>`
-              + `<span>${arm.name}</span><span class="tip-val">${opts.fmt?opts.fmt(v):v}</span></div>`;
+      ARMS.forEach((a,k) => {
+        const hh = D[a.key].hours;
+        let i = 0; while (i < hh.length-1 && Math.abs(hh[i+1]-hrs) < Math.abs(hh[i]-hrs)) i++;
+        const v = D[a.key][field][i];
+        dots[k].setAttribute("cx",x(hh[i])); dots[k].setAttribute("cy",y(v));
+        rows += `<div class="tip-row"><span class="swatch" style="width:8px;height:8px;background:${cv(a.colour)}"></span>`
+             +  `<span>${a.name}</span><span class="tip-val">${opts.fmt(v)}</span></div>`;
       });
       tip.innerHTML = `<div style="color:var(--muted);margin-bottom:3px">${hrs.toFixed(1)} hours</div>` + rows;
       tip.classList.add("on");
       const hb = host.getBoundingClientRect();
-      const px = (x(hrs)/W)*box.width + (box.left - hb.left);
-      const tw = tip.offsetWidth;
+      const px = (x(hrs)/W)*box.width + (box.left - hb.left), tw = tip.offsetWidth;
       tip.style.left = Math.max(0, Math.min(hb.width-tw, px-tw/2)) + "px";
       tip.style.top = "4px";
     });
@@ -1263,14 +1289,11 @@ after    tactics 0.347   centre <b>0.399</b>   vs-prev <b>0.740</b></pre>
   }
 
   function drawAll() {
-    lineChart("mat","mat-tip","mat-host","material",
-      {min:-4,max:16,ticks:[-4,0,4,8,12,16],baseline:0,fmt:(v)=>(v>0?"+":"")+v.toFixed(1)});
-    lineChart("tr","tr-tip","tr-host","trunc",
-      {min:0,max:60,ticks:[0,20,40,60],fmt:(v)=>v.toFixed(0)+"%"});
-    lineChart("op","op-tip","op-host","opening",
-      {min:0,max:0.8,ticks:[0,0.2,0.4,0.6,0.8],baseline:0.2,fmt:(v)=>v.toFixed(2)});
+    chart("mat","mat-tip","mat-host","material",
+      {min:-6,max:24,ticks:[-6,0,6,12,18,24],baseline:0,fmt:(v)=>(v>0?"+":"")+v.toFixed(0)});
+    chart("tr","tr-tip","tr-host","trunc",
+      {min:0,max:65,ticks:[0,20,40,60],fmt:(v)=>v.toFixed(0)+"%"});
   }
-
   drawAll();
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", drawAll);
   new MutationObserver(drawAll).observe(document.documentElement,{attributes:true,attributeFilter:["data-theme"]});

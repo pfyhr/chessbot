@@ -150,23 +150,29 @@ sits 98% idle.
 .venv/bin/chess-play --ladder --device cpu      # or the terminal client
 ```
 
-25 generations, 6,400 games, **62 minutes**
-([full report](bench/results/2026-08-20-chess-first-run.md)):
+Ten-hour runs, two at a time on one GPU so they contend equally. Each configuration
+differs from the previous by one change
+([report](bench/results/2026-08-22-proven-win-and-search-width.md)):
 
-| | gen 0 | gen 24 | random baseline |
+| | baseline | + proven-win | + 32 root actions |
 |---|---:|---:|---:|
-| material vs random | -1.31 | **+4.04** | -0.06 |
-| defend (avoid mate-in-1) | 0.210 | 0.285 | 0.229 |
-| mate-in-1 | 0.030 | 0.010 | 0.031 |
+| material vs random | +14.7 | +14.4 | **+21.6** |
+| games truncated | 36% | 19% | **14%** |
+| mean game length | 165 | 146 | **123** |
+| **Elo vs baseline** | — | **+49** | **+160** |
 
-Last vs first over 200 games: **94W–24L–82D with search (+127 Elo)**; without search,
-196 of 200 are draws and the same two nets score exactly 0.500. Neither network can
-convert without search, so raw-policy match play cannot see the difference at all —
-the opposite of Connect4, where the raw margin was the larger one.
+**Proven-win propagation** (+49): a terminal result is a fact, not a score, and was
+being min-max rescaled alongside value estimates — a certain checkmate beat a
+confidently wrong guess by 0.13, against Gumbel noise of σ ≈ 1.28. Mate-in-1 with the
+trained network went 0.217 → 1.000; a *flat* network had scored 0.975 on the same
+suite, so training had made the engine worse at mates than knowing nothing.
 
-Mate-in-1 never leaves chance, and opening preference oscillates rather than
-converging. 6,400 games is ~0.015% of AlphaZero's 44 million; the claim is that the
-machinery works on chess, not that the engine is good.
+**Wider root search** (+160): with 16 root actions and ~40 legal moves the winning
+move is often never sampled. Doubling to 32 wins on *fewer* evaluations.
+
+Still unexplained: opening preference swings rather than converging, often ending
+below its 0.200 random baseline. Four hypotheses have failed — replay window, learning
+rate, value-target quality, search width.
 
 ## Compute budget
 
