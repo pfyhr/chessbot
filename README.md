@@ -17,9 +17,13 @@ Three goals, in order:
 - [x] **Phase 1b** — position/move encoding (4672-move policy), cross-checked vs `python-chess`
 - [x] **Phase 1c** — PyO3/maturin bridge, measured against a network forward
 - [x] **Phase 2** — Gumbel MCTS + batched self-play, validated on Connect4
-- [x] **Phase 3** — chess self-play; loop verified on chess (+127 Elo in one hour)
-- [ ] Phase 4 — UCI binary, time-ladder checkpoints, fastchess/Ordo harness
-- [ ] Phase 5 — performance engineering
+- [x] **Phase 3** — chess self-play, and the search work it turned into:
+  +531 Elo of self-improvement in 10h, plus +160 from proven-win propagation
+  and a wider root search
+- [ ] Phase 4 — UCI binary, time-ladder checkpoints, fastchess/Ordo + SPRT
+  (every Elo figure so far is a 200-game match with no significance test)
+- [ ] Phase 5 — performance engineering, and a root-action sweep: worth +160 Elo
+  the one time it was changed, never tuned since
 - [ ] Phase 6 — tabula-rasa vs warm-start experiment
 
 ## Layout
