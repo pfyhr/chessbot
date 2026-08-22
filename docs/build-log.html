@@ -481,11 +481,16 @@
           <div class="phase-note">The full loop, validated end to end on Connect4.</div>
         </div>
       </div>
-      <div class="phase phase-ahead">
-        <div class="phase-id">3</div>
+      <div class="phase phase-done">
+        <div class="phase-id">3 ✓</div>
         <div>
           <div class="phase-name">Chess self-play</div>
-          <div class="phase-note">Same machinery — the core is generic over a <code>Game</code> trait — with a larger network.</div>
+          <div class="phase-note">
+            Same machinery — the core is generic over a <code>Game</code> trait. Signed off at
+            +127&nbsp;Elo after an hour, then kept going: the loop was already working, and the
+            interesting question turned out to be why it was working <em>badly</em>. Everything
+            in section 04 came after this point and was not in the plan.
+          </div>
         </div>
       </div>
       <div class="phase phase-ahead">
