@@ -221,6 +221,15 @@ pub(crate) fn legal_mask_batch<'py>(
 
 const OBS: usize = 119 * 64;
 
+fn outcome_str(o: az_core::game::Outcome) -> &'static str {
+    use az_core::game::Outcome::*;
+    match o {
+        Win => "win",
+        Loss => "loss",
+        Draw => "draw",
+    }
+}
+
 /// `(obs, policy, z, value_mask)` as handed to the training loop.
 ///
 /// `value_mask` is 0 for positions from games the ply limit cut short. Those
@@ -452,5 +461,28 @@ impl PyChessSearch {
     fn values<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f32>> {
         let v: Vec<f32> = self.searches.iter().map(|s| s.root_value()).collect();
         Array1::from_vec(v).into_pyarray(py)
+    }
+
+    /// Results the rules guarantee at each root: `"win"`, `"loss"`, `"draw"`, or
+    /// `None` where the search proved nothing.
+    ///
+    /// A UCI engine should report these as mate scores rather than as an
+    /// evaluation -- they are certainties, not estimates.
+    fn proven(&self) -> Vec<Option<&'static str>> {
+        self.searches
+            .iter()
+            .map(|s| s.proven().map(outcome_str))
+            .collect()
+    }
+
+    /// Simulations actually spent, per position.
+    fn simulations(&self) -> Vec<u32> {
+        self.searches.iter().map(|s| s.simulations()).collect()
+    }
+
+    /// Tree nodes allocated, per position -- the closest thing to a node count
+    /// that UCI's `info nodes` expects.
+    fn nodes(&self) -> Vec<usize> {
+        self.searches.iter().map(|s| s.nodes_allocated()).collect()
     }
 }

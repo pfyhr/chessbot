@@ -21,6 +21,7 @@ chess-train = "chessbot.train_chess:main"
 chess-report = "chessbot.chess_report:main"
 chess-play = "chessbot.play_chess:main"
 chess-serve = "chessbot.serve:main"
+chess-uci = "chessbot.uci:main"
 
 [tool.maturin]
 manifest-path = "crates/az-py/Cargo.toml"
