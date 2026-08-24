@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 import re
 import select
 import sys
@@ -74,7 +75,20 @@ def wdl_of(value: float) -> str:
     return f"wdl {int(win / total * 1000)} {int(draw / total * 1000)} {int(loss / total * 1000)}"
 
 
+# Set CHESSBOT_UCI_LOG to a path to record the conversation. Protocol bugs with a
+# GUI are otherwise almost impossible to see: both sides look fine in isolation.
+LOG = os.environ.get("CHESSBOT_UCI_LOG")
+
+
+def log(direction: str, line: str) -> None:
+    if not LOG:
+        return
+    with open(LOG, "a") as fh:
+        fh.write(f"{time.time():.3f} {direction} {line}\n")
+
+
 def out(line: str) -> None:
+    log(">", line)
     sys.stdout.write(line + "\n")
     sys.stdout.flush()
 
@@ -95,6 +109,10 @@ class Engine:
         self.sims = 128
         self.root_actions = 32
         self.multipv = 1
+        # Commands that arrived mid-search and are not ours to act on now. They
+        # must be replayed, not dropped: a GUI sends `stop`, `position` and `go`
+        # back to back, and swallowing the last two desyncs it permanently.
+        self.queued: list[str] = []
         self.cache: dict[int, Net] = {}
         self.pos = cc.Position()
         # Rolling estimate of simulations per second, for time controls.
@@ -114,6 +132,7 @@ class Engine:
 
     def handle(self, line: str) -> bool:
         """Returns False when the GUI asks the engine to quit."""
+        log("<", line)
         parts = line.split()
         if not parts:
             return True
@@ -234,11 +253,18 @@ class Engine:
         """
         best = None
         sims = 64
+        total_nodes = 0
+        total_time = 0.0
         quitting = False
 
         while True:
             best, detail, elapsed, done, nodes = self.run_search(sims)
-            self.report(detail, elapsed, done, nodes, best)
+            # `nodes` in UCI means total nodes searched, and a GUI enforcing its
+            # own node limit counts them. Reporting per-move visits here left
+            # Nibbler's counter crawling and its limit never triggering.
+            total_nodes += nodes
+            total_time += elapsed
+            self.report(detail, total_time, done, total_nodes, best)
 
             stop = False
             for line in self.pending_input():
@@ -248,9 +274,17 @@ class Engine:
                     stop, quitting = True, True
                 elif line == "isready":
                     out("readyok")
-            if stop or sims >= 65536:
+                elif line:
+                    # Anything else -- `position`, `go`, `setoption` -- belongs to
+                    # the next turn. Keep it and stop searching so it gets one.
+                    self.queued.append(line)
+                    stop = True
+            if stop:
                 break
-            sims *= 2
+            # Cap the round size: each round is a fresh search, so a huge one
+            # buys little and makes `stop` wait for it. 1024 keeps the worst-case
+            # response under about five seconds.
+            sims = min(sims * 2, 1024)
 
         out(f"bestmove {best}")
         if quitting:
@@ -281,7 +315,13 @@ class Engine:
         )
 
     def report(self, detail, elapsed, done, nodes, best) -> None:
-        ms, nps = int(elapsed * 1000), int(done / elapsed)
+        """Emit one round of analysis.
+
+        `nodes` is the cumulative total, which is what UCI means by the word and
+        what a GUI counts against its own limits. Per-move counts belong in the
+        `info string` lines instead.
+        """
+        ms, nps = int(elapsed * 1000), int(nodes / max(elapsed, 1e-6))
 
         for rank, (uci, prob, prior, visits, q, proven) in enumerate(detail[: self.multipv], 1):
             v = q if q is not None else 0.0
@@ -289,7 +329,7 @@ class Engine:
             # "everything after this token", so putting `string` first swallows
             # the principal variation.
             out(
-                f"info multipv {rank} depth 1 seldepth 1 nodes {max(1, visits)} "
+                f"info multipv {rank} depth 1 seldepth 1 nodes {nodes} "
                 f"time {ms} nps {nps} score {score_of(proven, v)} "
                 f"{wdl_of(v)} pv {uci}"
             )
@@ -327,6 +367,17 @@ class Engine:
         out(f"bestmove {best}")
 
 
+def commands(engine: "Engine"):
+    """Commands to act on: anything deferred from a search first, then stdin."""
+    while True:
+        while engine.queued:
+            yield engine.queued.pop(0)
+        line = sys.stdin.readline()
+        if not line:
+            return
+        yield line.strip()
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="UCI engine over the trained network.")
     ap.add_argument("--run", type=Path, default=None,
@@ -342,8 +393,8 @@ def main() -> None:
     run = args.run or newest_run(Path(__file__).resolve().parents[2] / "runs")
     engine = Engine(run, args.blocks, args.channels, args.device)
 
-    for line in sys.stdin:
-        if not engine.handle(line.strip()):
+    for line in commands(engine):
+        if not engine.handle(line):
             break
 
 
