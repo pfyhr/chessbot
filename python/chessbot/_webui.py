@@ -46,6 +46,12 @@ PAGE = r"""<!doctype html>
              background:var(--hint); opacity:.85; pointer-events:none; }
   .sq.occupied .dot { width:88%; height:88%; border-radius:50%; background:none;
                       box-shadow: inset 0 0 0 4px var(--hint); opacity:.8; }
+  .coord { position:absolute; font-family:var(--mono); font-size:10px; font-weight:700;
+           opacity:.8; pointer-events:none; letter-spacing:.02em; }
+  .coord.rank { top:2px; left:3px; }
+  .coord.file { bottom:1px; right:3px; }
+  .sq.light .coord { color:var(--dark-sq); }
+  .sq.dark  .coord { color:var(--light-sq); }
   .wp { color:#fff; text-shadow:0 1px 2px rgba(0,0,0,.45); }
   .bp { color:#151515; text-shadow:0 1px 1px rgba(255,255,255,.25); }
 
@@ -149,7 +155,7 @@ function draw() {
   for (const r of ranks) for (const f of files) {
     const name = f + r;
     const d = document.createElement("div");
-    const dark = (FILES.indexOf(f) + r) % 2 === 0;
+    const dark = (FILES.indexOf(f) + r) % 2 === 1;  // a1 is dark
     d.className = "sq " + (dark ? "dark" : "light");
     if (state.last && state.last.includes(name)) d.classList.add("last");
     const p = pieces[name];
@@ -159,6 +165,16 @@ function draw() {
       d.classList.add(dark ? "dark" : "light", "sq");
     }
     if (sel === name) d.classList.add("sel");
+    if (f === files[0]) {
+      const lab = document.createElement("span");
+      lab.className = "coord rank"; lab.textContent = r;
+      d.appendChild(lab);
+    }
+    if (r === ranks[ranks.length - 1]) {
+      const lab = document.createElement("span");
+      lab.className = "coord file"; lab.textContent = f;
+      d.appendChild(lab);
+    }
     if (sel && (state.legal[sel] || []).some(u => u.slice(2,4) === name)) {
       const dot = document.createElement("div");
       dot.className = "dot";
@@ -213,12 +229,23 @@ $("promo").onclick = (e) => {
   pending = null; $("promo").classList.remove("on"); send(uci);
 };
 
+// Orientation and the side control follow the *server's* idea of the game, not
+// the other way round -- otherwise a game started anywhere but this dropdown
+// leaves the board pointing the wrong way.
+function syncToState() {
+  if (!state) return;
+  flipped = !state.human_white;
+  $("side").value = state.human_white ? "w" : "b";
+  $("sims").value = state.sims;
+  $("simsval").textContent = state.sims;
+}
+
 async function newGame() {
   busy = true; draw();
   state = await api("/api/new", {
     gen: +$("gen").value, sims: +$("sims").value, human_white: $("side").value === "w"
   });
-  flipped = $("side").value === "b";
+  syncToState();
   busy = false; sel = null; draw();
 }
 
@@ -234,7 +261,7 @@ $("sims").onchange = async (e) => { state = await api("/api/config", {sims:+e.ta
     `<option value="${g}"${g === info.gens[info.gens.length-1] ? " selected" : ""}>gen ${String(g).padStart(3,"0")}</option>`
   ).join("");
   state = await api("/api/state");
-  $("sims").value = state.sims; $("simsval").textContent = state.sims;
+  syncToState();
   draw();
 })();
 </script>

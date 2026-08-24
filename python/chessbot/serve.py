@@ -36,9 +36,18 @@ class Game:
     the search, and carries the repetition history that a FEN would lose.
     """
 
-    def __init__(self, nets: "NetCache", gen: int, sims: int, human_white: bool, device: str):
+    def __init__(
+        self,
+        nets: "NetCache",
+        gen: int,
+        sims: int,
+        human_white: bool,
+        device: str,
+        considered: int = 32,
+    ):
         self.nets, self.device = nets, device
         self.gen, self.sims, self.human_white = gen, sims, human_white
+        self.considered = considered
         self.reset()
 
     def reset(self) -> None:
@@ -96,7 +105,9 @@ class Game:
         if self.pos.outcome() is not None:
             return
         net = self.nets.get(self.gen)
-        uci, value = search(net, self.pos, self.device, self.sims, len(self.history))
+        uci, value = search(
+            net, self.pos, self.device, self.sims, len(self.history), self.considered
+        )
         self.eval, self.eval_white = value, self.board.turn == chess.WHITE
         self.push(uci)
 
@@ -118,8 +129,14 @@ class Game:
         }
 
 
-def search(net, pos: cc.Position, device: str, sims: int, seed: int):
-    """Returns (uci, value) from the moving side's point of view."""
+def search(net, pos: cc.Position, device: str, sims: int, seed: int, considered: int = 32):
+    """Returns (uci, value) from the moving side's point of view.
+
+    `considered` is the root-action count. 16 was the training default and costs
+    roughly 160 Elo against 32: with ~40 legal moves, the best one is often never
+    sampled. Interactive play has no throughput constraint, so it uses the wider
+    setting.
+    """
     if sims <= 0:
         obs = cc.encode_batch([pos])
         with torch.no_grad():
@@ -130,7 +147,7 @@ def search(net, pos: cc.Position, device: str, sims: int, seed: int):
         best = max(pos.legal_moves(), key=lambda m: logits[pos.policy_index(m)])
         return best, value
 
-    s = cc.ChessSearch([pos], sims=sims, max_considered=16, seed=seed)
+    s = cc.ChessSearch([pos], sims=sims, max_considered=considered, seed=seed)
     while (obs := s.next_batch()) is not None:
         with torch.no_grad():
             logits, wdl = net(torch.from_numpy(obs).to(device))
@@ -166,7 +183,7 @@ class NetCache:
         return self.cache[gen]
 
 
-def make_handler(game_ref: dict, nets: NetCache, device: str):
+def make_handler(game_ref: dict, nets: NetCache, device: str, considered: int):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):  # keep the console for the app, not the access log
             pass
@@ -199,7 +216,8 @@ def make_handler(game_ref: dict, nets: NetCache, device: str):
                         game.engine_move()
                 elif self.path == "/api/new":
                     game_ref["game"] = game = Game(
-                        nets, body["gen"], body["sims"], body["human_white"], device
+                        nets, body["gen"], body["sims"], body["human_white"], device,
+                        considered,
                     )
                 elif self.path == "/api/undo":
                     game.undo()
@@ -214,11 +232,26 @@ def make_handler(game_ref: dict, nets: NetCache, device: str):
     return Handler
 
 
+def newest_run(root: Path) -> Path:
+    """The most recently trained run directory.
+
+    Defaulting to a fixed name goes stale the moment a better run finishes -- and
+    quietly, since an old checkpoint still loads and still plays.
+    """
+    candidates = [d for d in root.glob("*") if d.is_dir() and any(d.glob("gen*.pt"))]
+    if not candidates:
+        raise SystemExit(f"no run directories with checkpoints under {root}")
+    return max(candidates, key=lambda d: max(p.stat().st_mtime for p in d.glob("gen*.pt")))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Serve a clickable board.")
-    ap.add_argument("--run", type=Path, default=Path("runs/chess-v1"))
+    ap.add_argument("--run", type=Path, default=None,
+                    help="run directory; defaults to the most recently trained one")
     ap.add_argument("--gen", type=int, help="starting generation (default: the latest)")
-    ap.add_argument("--sims", type=int, default=32)
+    ap.add_argument("--sims", type=int, default=128,
+                    help="higher than training: interactive play is not throughput-bound")
+    ap.add_argument("--considered", type=int, default=32, help="root actions to search")
     ap.add_argument("--black", action="store_true", help="start playing Black")
     ap.add_argument("--blocks", type=int, default=6)
     ap.add_argument("--channels", type=int, default=96)
@@ -231,13 +264,21 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    nets = NetCache(args.run, args.blocks, args.channels, args.device)
+    run = args.run or newest_run(Path("runs"))
+    nets = NetCache(run, args.blocks, args.channels, args.device)
     gen = args.gen if args.gen is not None else max(nets.paths)
-    game_ref = {"game": Game(nets, gen, args.sims, not args.black, args.device)}
+    game_ref = {
+        "game": Game(nets, gen, args.sims, not args.black, args.device, args.considered)
+    }
 
     url = f"http://127.0.0.1:{args.port}"
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(game_ref, nets, args.device))
-    print(f"chessbot on {url}   ({len(nets.paths)} generations, {args.device})")
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", args.port),
+        make_handler(game_ref, nets, args.device, args.considered),
+    )
+    print(f"chessbot on {url}")
+    print(f"  {run}  ({len(nets.paths)} generations)  "
+          f"{args.device}  {args.sims} sims / {args.considered} root actions")
     print("ctrl-c to stop")
     if not args.no_browser:
         webbrowser.open(url)
