@@ -39,6 +39,10 @@ use crate::game::{Game, Outcome};
 /// Not created yet.
 const NO_CHILD: u32 = u32::MAX;
 
+/// One root move as the caller sees it: the move, its share of the improved
+/// policy, its visit count, its mean value, and any result the rules guarantee.
+pub type RootMove<G> = (<G as Game>::Move, f32, u32, Option<f32>, Option<Outcome>);
+
 /// Ranking offset for a proven result.
 ///
 /// Deliberately far outside the range any combination of Gumbel noise, policy
@@ -690,7 +694,7 @@ impl<G: Game> Search<G> {
     /// move. This is what a GUI needs for `info multipv`: it turns the search's
     /// opinion of *each* move into something a person can look at, rather than
     /// only the one it settled on.
-    pub fn root_detail(&self) -> Vec<(G::Move, f32, u32, Option<f32>, Option<Outcome>)> {
+    pub fn root_detail(&self) -> Vec<RootMove<G>> {
         let improved = self.improved_policy(0);
         let scores = self.root_scores();
         let mut rows: Vec<(usize, f32)> = (0..self.nodes[0].edges.len())

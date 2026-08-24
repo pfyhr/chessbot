@@ -221,6 +221,9 @@ pub(crate) fn legal_mask_batch<'py>(
 
 const OBS: usize = 119 * 64;
 
+/// `(uci, improved policy, visits, mean value, proven result)` for one root move.
+type RootMoveRow = (String, f32, u32, Option<f32>, Option<&'static str>);
+
 fn outcome_str(o: az_core::game::Outcome) -> &'static str {
     use az_core::game::Outcome::*;
     match o {
@@ -480,7 +483,7 @@ impl PyChessSearch {
     /// Each entry is `(uci, improved_policy, visits, q, proven)`. A GUI turns
     /// these into `info multipv` lines, which is how a person gets to see what
     /// the search thought of every move rather than only the one it played.
-    fn root_detail(&self) -> Vec<(String, f32, u32, Option<f32>, Option<&'static str>)> {
+    fn root_detail(&self) -> Vec<RootMoveRow> {
         if self.searches.is_empty() {
             return Vec::new();
         }

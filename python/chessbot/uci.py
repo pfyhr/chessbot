@@ -284,11 +284,15 @@ class Engine:
         ms, nps = int(elapsed * 1000), int(done / elapsed)
         for rank, (uci, prob, visits, q, proven) in enumerate(detail[: self.multipv], 1):
             v = q if q is not None else 0.0
+            # `pv` must be last: UCI defines both `pv` and `string` as
+            # "everything after this token", so putting `string` first swallows
+            # the principal variation. The policy share goes on its own line.
             out(
                 f"info multipv {rank} depth 1 seldepth 1 nodes {max(1, visits)} "
                 f"time {ms} nps {nps} score {score_of(proven, v)} "
-                f"{wdl_of(v)} string p={prob * 100:.1f}% n={visits} pv {uci}"
+                f"{wdl_of(v)} pv {uci}"
             )
+            out(f"info string {uci} policy {prob * 100:.1f}% visits {visits}")
         if not detail:
             out(f"info depth 1 nodes {nodes} time {ms} nps {nps} pv {best}")
 
