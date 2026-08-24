@@ -150,9 +150,33 @@ sits 98% idle.
 ```
 .venv/bin/chess-train --generations 25 --games 256 --out runs/chess-v1
 .venv/bin/chess-report runs/chess-v1
-.venv/bin/chess-serve                           # clickable board in a browser
-.venv/bin/chess-play --ladder --device cpu      # or the terminal client
+.venv/bin/chess-uci                             # UCI engine — use any chess GUI
+.venv/bin/chess-play --ladder --device cpu      # terminal client with a staircase
+.venv/bin/chess-serve                           # built-in browser board
 ```
+
+### Using a real chess GUI
+
+The engine speaks UCI, so any GUI from
+[Stockfish's list](https://official-stockfish.github.io/docs/stockfish-wiki/Download-and-usage.html#download-a-chess-gui)
+works. Point it at the absolute path of `.venv/bin/chess-uci`.
+
+Free and open source, all cross-platform: **En Croissant** (modern, the easiest start),
+**Nibbler** (built for AlphaZero-style engines), **Cute Chess** (also a tournament
+runner), **BanksiaGUI**.
+
+Options the GUI will show:
+
+| option | default | note |
+|---|---|---|
+| `Generation` | latest | which checkpoint to play — set it low to handicap it |
+| `Sims` | 128 | simulations per move when no clock is given |
+| `RootActions` | 32 | root actions considered; 16 was the training default and is worth ~160 Elo less |
+| `Device` | mps | `cpu` to leave the GPU to a training run |
+
+It accepts clocks (`wtime`/`btime`), fixed times (`movetime`) and node limits
+(`go nodes N`), so `fastchess` and `cutechess-cli` can run tournaments and SPRT
+against it.
 
 Ten-hour runs, two at a time on one GPU so they contend equally. Each configuration
 differs from the previous by one change
