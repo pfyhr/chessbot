@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import math
 import re
+import select
 import sys
 import time
 from pathlib import Path
@@ -44,6 +45,33 @@ ENGINE_AUTHOR = "pontus"
 def value_to_cp(v: float) -> int:
     v = max(-0.9999, min(0.9999, v))
     return int(round(111.7 * math.tan(1.5620688421 * v)))
+
+
+def score_of(proven: str | None, value: float) -> str:
+    """A proven result is a certainty and is reported as mate, not as a number.
+
+    The distance to mate is not tracked, so it is stated as the shortest it could
+    be: honest about the sign, approximate in depth.
+    """
+    if proven == "win":
+        return "mate 1"
+    if proven == "loss":
+        return "mate -1"
+    return f"cp {value_to_cp(value)}"
+
+
+def wdl_of(value: float) -> str:
+    """Win/draw/loss in UCI's per-mille form.
+
+    The network produces WDL natively; centipawns are the derived quantity, so
+    reporting both loses nothing and GUIs that understand WDL show the better one.
+    """
+    w = max(0.0, min(1.0, (value + 1) / 2))
+    draw = max(0.0, 1.0 - abs(value))
+    win = max(0.0, w - draw / 2)
+    loss = max(0.0, 1.0 - win - draw)
+    total = win + draw + loss or 1.0
+    return f"wdl {int(win / total * 1000)} {int(draw / total * 1000)} {int(loss / total * 1000)}"
 
 
 def out(line: str) -> None:
@@ -66,6 +94,7 @@ class Engine:
         self.generation = max(self.paths)
         self.sims = 128
         self.root_actions = 32
+        self.multipv = 1
         self.cache: dict[int, Net] = {}
         self.pos = cc.Position()
         # Rolling estimate of simulations per second, for time controls.
@@ -98,6 +127,8 @@ class Engine:
             out(f"option name Sims type spin default {self.sims} min 1 max 100000")
             out(f"option name RootActions type spin default {self.root_actions} min 2 max 256")
             out("option name Device type string default " + self.device)
+            out(f"option name MultiPV type spin default {self.multipv} min 1 max 256")
+            out("option name UCI_ShowWDL type check default true")
             out("uciok")
         elif cmd == "isready":
             self.net()  # pay the load cost here, where the GUI expects to wait
@@ -132,6 +163,10 @@ class Engine:
             self.root_actions = max(2, int(value))
         elif name == "Device":
             self.device, self.cache = value, {}
+        elif name == "MultiPV":
+            self.multipv = max(1, int(value))
+        # UCI_ShowWDL is accepted; WDL is always reported, since it is what the
+        # network natively produces and centipawns are the derived quantity.
 
     def set_position(self, args: list[str]) -> None:
         if not args:
@@ -176,16 +211,54 @@ class Engine:
         # searched a little less deeply.
         return max(8, min(int(seconds * 0.7 * self.sps), 20000))
 
-    def go(self, args: list[str]) -> None:
-        moves, outcome = self.pos.expand()
-        if outcome is not None or not moves:
-            out("bestmove 0000")
-            return
+    def pending_input(self) -> list[str]:
+        """Whatever the GUI has said since we last looked, without blocking."""
+        lines = []
+        while select.select([sys.stdin], [], [], 0)[0]:
+            line = sys.stdin.readline()
+            if not line:
+                break
+            lines.append(line.strip())
+        return lines
 
-        sims = self.budget(args)
+    def go_infinite(self) -> None:
+        """Analyse until told to stop, reporting as we go.
+
+        This is the mode analysis GUIs actually use -- Nibbler and En Croissant
+        send `go infinite` and expect a live stream of `info` until `stop`. A
+        single burst followed by `bestmove` looks to them like an engine that
+        gave up immediately.
+
+        Deepening by doubling the simulation budget gives a stream of
+        progressively better answers while staying interruptible between rounds.
+        """
+        best = None
+        sims = 64
+        quitting = False
+
+        while True:
+            best, detail, elapsed, done, nodes = self.run_search(sims)
+            self.report(detail, elapsed, done, nodes, best)
+
+            stop = False
+            for line in self.pending_input():
+                if line == "stop":
+                    stop = True
+                elif line == "quit":
+                    stop, quitting = True, True
+                elif line == "isready":
+                    out("readyok")
+            if stop or sims >= 65536:
+                break
+            sims *= 2
+
+        out(f"bestmove {best}")
+        if quitting:
+            raise SystemExit(0)
+
+    def run_search(self, sims: int):
         net = self.net()
         started = time.perf_counter()
-
         search = cc.ChessSearch([self.pos], sims=sims, max_considered=self.root_actions, seed=0)
         while (obs := search.next_batch()) is not None:
             with torch.no_grad():
@@ -196,30 +269,42 @@ class Engine:
                 np.ascontiguousarray(logits.float().cpu().numpy()),
                 np.ascontiguousarray(values.astype(np.float32)),
             )
-
         elapsed = max(1e-6, time.perf_counter() - started)
         done = int(search.simulations()[0])
         self.sps = 0.7 * self.sps + 0.3 * (done / elapsed)
-
-        best = search.moves()[0]
-        value = float(search.values()[0])
-        nodes = int(search.nodes()[0])
-        proven = search.proven()[0]
-
-        # A proven result is a certainty, so report it as a mate score rather
-        # than as an evaluation. The distance is not tracked, so it is stated as
-        # the shortest it could be -- honest about the sign, approximate in depth.
-        if proven == "win":
-            score = "mate 1"
-        elif proven == "loss":
-            score = "mate -1"
-        else:
-            score = f"cp {value_to_cp(value)}"
-
-        out(
-            f"info depth 1 nodes {nodes} time {int(elapsed * 1000)} "
-            f"nps {int(done / elapsed)} score {score} pv {best}"
+        return (
+            search.moves()[0],
+            search.root_detail(),
+            elapsed,
+            done,
+            int(search.nodes()[0]),
         )
+
+    def report(self, detail, elapsed, done, nodes, best) -> None:
+        ms, nps = int(elapsed * 1000), int(done / elapsed)
+        for rank, (uci, prob, visits, q, proven) in enumerate(detail[: self.multipv], 1):
+            v = q if q is not None else 0.0
+            out(
+                f"info multipv {rank} depth 1 seldepth 1 nodes {max(1, visits)} "
+                f"time {ms} nps {nps} score {score_of(proven, v)} "
+                f"{wdl_of(v)} string p={prob * 100:.1f}% n={visits} pv {uci}"
+            )
+        if not detail:
+            out(f"info depth 1 nodes {nodes} time {ms} nps {nps} pv {best}")
+
+    def go(self, args: list[str]) -> None:
+        moves, outcome = self.pos.expand()
+        if outcome is not None or not moves:
+            out("bestmove 0000")
+            return
+
+        if "infinite" in args or "ponder" in args:
+            self.go_infinite()
+            return
+
+        sims = self.budget(args)
+        best, detail, elapsed, done, nodes = self.run_search(sims)
+        self.report(detail, elapsed, done, nodes, best)
         out(f"bestmove {best}")
 
 

@@ -475,6 +475,30 @@ impl PyChessSearch {
             .collect()
     }
 
+    /// Per-root-move detail for the first position, ordered best first.
+    ///
+    /// Each entry is `(uci, improved_policy, visits, q, proven)`. A GUI turns
+    /// these into `info multipv` lines, which is how a person gets to see what
+    /// the search thought of every move rather than only the one it played.
+    fn root_detail(&self) -> Vec<(String, f32, u32, Option<f32>, Option<&'static str>)> {
+        if self.searches.is_empty() {
+            return Vec::new();
+        }
+        self.searches[0]
+            .root_detail()
+            .into_iter()
+            .map(|(mv, p, visits, q, proven)| {
+                (
+                    UciMove::from_standard(mv).to_string(),
+                    p,
+                    visits,
+                    q,
+                    proven.map(outcome_str),
+                )
+            })
+            .collect()
+    }
+
     /// Simulations actually spent, per position.
     fn simulations(&self) -> Vec<u32> {
         self.searches.iter().map(|s| s.simulations()).collect()

@@ -683,6 +683,28 @@ impl<G: Game> Search<G> {
     pub fn proven(&self) -> Option<Outcome> {
         self.nodes[0].proven
     }
+
+    /// Per-root-move detail, ordered best first.
+    ///
+    /// Returns `(move, improved policy, visits, Q, proven)` for every legal root
+    /// move. This is what a GUI needs for `info multipv`: it turns the search's
+    /// opinion of *each* move into something a person can look at, rather than
+    /// only the one it settled on.
+    pub fn root_detail(&self) -> Vec<(G::Move, f32, u32, Option<f32>, Option<Outcome>)> {
+        let improved = self.improved_policy(0);
+        let scores = self.root_scores();
+        let mut rows: Vec<(usize, f32)> = (0..self.nodes[0].edges.len())
+            .map(|i| (i, scores[i]))
+            .collect();
+        rows.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        rows.into_iter()
+            .map(|(i, _)| {
+                let e = &self.nodes[0].edges[i];
+                (e.mv, improved[i], e.visits, e.q(), e.proven)
+            })
+            .collect()
+    }
 }
 
 /// Min-max rescale to [0, 1] in place.
