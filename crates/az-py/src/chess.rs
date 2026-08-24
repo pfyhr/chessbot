@@ -221,8 +221,8 @@ pub(crate) fn legal_mask_batch<'py>(
 
 const OBS: usize = 119 * 64;
 
-/// `(uci, improved policy, visits, mean value, proven result)` for one root move.
-type RootMoveRow = (String, f32, u32, Option<f32>, Option<&'static str>);
+/// `(uci, improved policy, raw prior, visits, mean value, proven result)`.
+type RootMoveRow = (String, f32, f32, u32, Option<f32>, Option<&'static str>);
 
 fn outcome_str(o: az_core::game::Outcome) -> &'static str {
     use az_core::game::Outcome::*;
@@ -490,10 +490,11 @@ impl PyChessSearch {
         self.searches[0]
             .root_detail()
             .into_iter()
-            .map(|(mv, p, visits, q, proven)| {
+            .map(|(mv, p, prior, visits, q, proven)| {
                 (
                     UciMove::from_standard(mv).to_string(),
                     p,
+                    prior,
                     visits,
                     q,
                     proven.map(outcome_str),

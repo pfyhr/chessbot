@@ -282,17 +282,32 @@ class Engine:
 
     def report(self, detail, elapsed, done, nodes, best) -> None:
         ms, nps = int(elapsed * 1000), int(done / elapsed)
-        for rank, (uci, prob, visits, q, proven) in enumerate(detail[: self.multipv], 1):
+
+        for rank, (uci, prob, prior, visits, q, proven) in enumerate(detail[: self.multipv], 1):
             v = q if q is not None else 0.0
             # `pv` must be last: UCI defines both `pv` and `string` as
             # "everything after this token", so putting `string` first swallows
-            # the principal variation. The policy share goes on its own line.
+            # the principal variation.
             out(
                 f"info multipv {rank} depth 1 seldepth 1 nodes {max(1, visits)} "
                 f"time {ms} nps {nps} score {score_of(proven, v)} "
                 f"{wdl_of(v)} pv {uci}"
             )
-            out(f"info string {uci} policy {prob * 100:.1f}% visits {visits}")
+
+        # Per-move detail in Lc0's `info string` shape, which analysis GUIs parse
+        # to show the policy prior and visit share beside each move. `P` is the
+        # network's raw prior, deliberately: the gap between it and where the
+        # visits went is exactly how much the search disagreed with the network,
+        # and that gap is the most interesting thing on the screen.
+        for uci, prob, prior, visits, q, proven in detail:
+            v = q if q is not None else 0.0
+            draw = max(0.0, 1.0 - abs(v))
+            out(
+                f"info string {uci} N: {visits} (P: {prior * 100:.2f}%) "
+                f"(Q: {v:.5f}) (D: {draw:.3f}) (V: {v:.4f})"
+            )
+        out(f"info string node N: {nodes}")
+
         if not detail:
             out(f"info depth 1 nodes {nodes} time {ms} nps {nps} pv {best}")
 

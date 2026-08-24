@@ -40,8 +40,19 @@ use crate::game::{Game, Outcome};
 const NO_CHILD: u32 = u32::MAX;
 
 /// One root move as the caller sees it: the move, its share of the improved
-/// policy, its visit count, its mean value, and any result the rules guarantee.
-pub type RootMove<G> = (<G as Game>::Move, f32, u32, Option<f32>, Option<Outcome>);
+/// policy, the network's raw prior, its visit count, its mean value, and any
+/// result the rules guarantee.
+///
+/// The prior is carried separately from the improved policy because the gap
+/// between them is exactly how much the search disagreed with the network.
+pub type RootMove<G> = (
+    <G as Game>::Move,
+    f32,
+    f32,
+    u32,
+    Option<f32>,
+    Option<Outcome>,
+);
 
 /// Ranking offset for a proven result.
 ///
@@ -702,10 +713,11 @@ impl<G: Game> Search<G> {
             .collect();
         rows.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
+        let priors = self.priors(0);
         rows.into_iter()
             .map(|(i, _)| {
                 let e = &self.nodes[0].edges[i];
-                (e.mv, improved[i], e.visits, e.q(), e.proven)
+                (e.mv, improved[i], priors[i], e.visits, e.q(), e.proven)
             })
             .collect()
     }
