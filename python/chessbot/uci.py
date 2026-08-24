@@ -115,8 +115,11 @@ class Engine:
         self.queued: list[str] = []
         self.cache: dict[int, Net] = {}
         self.pos = cc.Position()
-        # Rolling estimate of simulations per second, for time controls.
-        self.sps = 400.0
+        # Rolling estimate of simulations per second, for time controls. Starts
+        # deliberately low: overestimating loses games on time, underestimating
+        # only loses a little depth, and the average corrects upward within a
+        # move or two.
+        self.sps = 120.0
 
     # --- network ------------------------------------------------------------
 
@@ -205,6 +208,35 @@ class Engine:
 
     # --- search -------------------------------------------------------------
 
+    def go_timed(self, seconds: float) -> None:
+        """Search under a clock, deepening until the next round would overrun.
+
+        A single fixed-size search cannot respect a clock: the budget is chosen
+        from an estimated speed, and if the estimate is optimistic the engine
+        flags. Deepening in rounds and checking the clock between them turns a
+        guess into a guarantee -- the worst case is one round of overshoot, not
+        an unbounded one.
+        """
+        deadline = time.perf_counter() + seconds
+        best = None
+        sims = 24
+        total_nodes = 0
+        total_time = 0.0
+
+        while True:
+            best, detail, elapsed, done, nodes = self.run_search(sims)
+            total_nodes += nodes
+            total_time += elapsed
+            self.report(detail, total_time, done, total_nodes, best)
+
+            remaining = deadline - time.perf_counter()
+            next_cost = (sims * 2) / max(self.sps, 1.0)
+            if remaining <= 0 or next_cost > remaining:
+                break
+            sims = min(sims * 2, 4096)
+
+        out(f"bestmove {best}")
+
     def budget(self, args: list[str]) -> int:
         """Simulations to spend, from whatever the GUI asked for."""
         opts = {}
@@ -215,6 +247,16 @@ class Engine:
 
         if "nodes" in opts:
             return max(1, opts["nodes"])
+        return -1  # no node limit; the caller works out the clock
+
+    def seconds_available(self, args: list[str]) -> float | None:
+        """How long this move may take, or None if the GUI gave no clock."""
+        opts = {}
+        for i, a in enumerate(args):
+            if a in ("wtime", "btime", "winc", "binc", "movetime", "movestogo"):
+                if i + 1 < len(args):
+                    opts[a] = int(args[i + 1])
+
         seconds = None
         if "movetime" in opts:
             seconds = opts["movetime"] / 1000.0
@@ -224,11 +266,9 @@ class Engine:
                 inc = opts.get("winc" if self.pos.turn == "white" else "binc", 0)
                 moves_left = max(10, opts.get("movestogo", 30))
                 seconds = (ours / moves_left + inc) / 1000.0
-        if seconds is None:
-            return self.sims
         # Leave headroom: a GUI that flags the engine is worse than one move
         # searched a little less deeply.
-        return max(8, min(int(seconds * 0.7 * self.sps), 20000))
+        return None if seconds is None else seconds * 0.7
 
     def pending_input(self) -> list[str]:
         """Whatever the GUI has said since we last looked, without blocking."""
@@ -362,9 +402,19 @@ class Engine:
             return
 
         sims = self.budget(args)
-        best, detail, elapsed, done, nodes = self.run_search(sims)
-        self.report(detail, elapsed, done, nodes, best)
-        out(f"bestmove {best}")
+        if sims > 0:
+            best, detail, elapsed, done, nodes = self.run_search(sims)
+            self.report(detail, elapsed, done, nodes, best)
+            out(f"bestmove {best}")
+            return
+
+        seconds = self.seconds_available(args)
+        if seconds is None:
+            best, detail, elapsed, done, nodes = self.run_search(self.sims)
+            self.report(detail, elapsed, done, nodes, best)
+            out(f"bestmove {best}")
+        else:
+            self.go_timed(seconds)
 
 
 def commands(engine: "Engine"):

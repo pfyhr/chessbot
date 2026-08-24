@@ -144,6 +144,8 @@ def main() -> None:
     ap.add_argument("--tactics", type=int, default=200)
     ap.add_argument("--device", default="auto")
     ap.add_argument("--out", default="runs/chess")
+    ap.add_argument("--init", type=Path, default=None,
+                    help="start from this checkpoint instead of random weights")
     args = ap.parse_args()
 
     device = pick_device(args.device)
@@ -152,6 +154,11 @@ def main() -> None:
 
     planes, h, w = cc.OBS_SHAPE
     net = Net(planes, (h, w), cc.POLICY_LEN, args.blocks, args.channels).to(device)
+    if args.init:
+        # Continuing beats restarting: every run so far has thrown away the
+        # hours before it, and the network is the only thing worth keeping.
+        net.load_state_dict(torch.load(args.init, map_location=device))
+        print(f"resuming from {args.init}")
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
     params = sum(p.numel() for p in net.parameters())
 
