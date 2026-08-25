@@ -29,7 +29,7 @@ import chessbot_core as cc
 import numpy as np
 import torch
 
-from .net import Net
+from .net import Net, load_checkpoint
 
 RESET, DIM, BOLD = "\033[0m", "\033[2m", "\033[1m"
 LIGHT_SQ, DARK_SQ = "\033[48;5;180m", "\033[48;5;137m"
@@ -72,7 +72,7 @@ def find_checkpoints(run: Path) -> dict[int, Path]:
 def load(path: Path, blocks: int, channels: int, device: str) -> Net:
     planes, h, w = cc.OBS_SHAPE
     net = Net(planes, (h, w), cc.POLICY_LEN, blocks, channels).to(device)
-    net.load_state_dict(torch.load(path, map_location=device))
+    net.load_state_dict(load_checkpoint(path, device)[0])
     return net.eval()
 
 

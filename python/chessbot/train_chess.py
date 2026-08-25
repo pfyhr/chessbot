@@ -36,7 +36,7 @@ import numpy as np
 import torch
 
 from . import chess_eval as ev
-from .net import Net, losses, wdl_to_scalar
+from .net import Net, load_checkpoint, losses, save_checkpoint, wdl_to_scalar
 
 
 def pick_device(requested: str) -> str:
@@ -157,9 +157,15 @@ def main() -> None:
     if args.init:
         # Continuing beats restarting: every run so far has thrown away the
         # hours before it, and the network is the only thing worth keeping.
-        net.load_state_dict(torch.load(args.init, map_location=device))
-        print(f"resuming from {args.init}")
+        net_state, opt_state, _ = load_checkpoint(args.init, device)
+        net.load_state_dict(net_state)
+        print(f"resuming from {args.init}"
+              + ("" if opt_state else "  (no optimizer state -- older checkpoint)"))
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
+    if args.init:
+        _, opt_state, _ = load_checkpoint(args.init, device)
+        if opt_state is not None:
+            opt.load_state_dict(opt_state)
     params = sum(p.numel() for p in net.parameters())
 
     print(f"device={device}  net={args.blocks}x{args.channels} ({params/1e6:.2f}M params)")
@@ -248,7 +254,7 @@ def main() -> None:
         )
 
         previous = copy.deepcopy(net).eval()
-        torch.save(net.state_dict(), out / f"gen{gen:03d}.pt")
+        save_checkpoint(out / f"gen{gen:03d}.pt", net, opt, {"gen": gen})
         (out / "history.json").write_text(json.dumps(history, indent=2))
 
     total = time.time() - t0

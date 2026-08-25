@@ -29,13 +29,13 @@ import numpy as np
 import torch
 
 from . import chess_eval as ev
-from .net import Net
+from .net import Net, load_checkpoint
 
 
 def load(path: Path, blocks: int, channels: int, device: str) -> Net:
     planes, h, w = cc.OBS_SHAPE
     net = Net(planes, (h, w), cc.POLICY_LEN, blocks, channels).to(device)
-    net.load_state_dict(torch.load(path, map_location=device))
+    net.load_state_dict(load_checkpoint(path, device)[0])
     return net.eval()
 
 

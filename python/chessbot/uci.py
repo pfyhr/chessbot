@@ -36,7 +36,7 @@ import chessbot_core as cc
 import numpy as np
 import torch
 
-from .net import Net
+from .net import Net, load_checkpoint
 
 ENGINE_NAME = "chessbot"
 ENGINE_AUTHOR = "pontus"
@@ -127,7 +127,7 @@ class Engine:
         if self.generation not in self.cache:
             planes, h, w = cc.OBS_SHAPE
             n = Net(planes, (h, w), cc.POLICY_LEN, self.blocks, self.channels).to(self.device)
-            n.load_state_dict(torch.load(self.paths[self.generation], map_location=self.device))
+            n.load_state_dict(load_checkpoint(self.paths[self.generation], self.device)[0])
             self.cache[self.generation] = n.eval()
         return self.cache[self.generation]
 

@@ -98,6 +98,40 @@ def z_to_wdl_target(z: torch.Tensor) -> torch.Tensor:
     return (1 - z).long()  # 1 -> 0 (win), 0 -> 1 (draw), -1 -> 2 (loss)
 
 
+def save_checkpoint(path, net, optimizer=None, meta: dict | None = None) -> None:
+    """Write a checkpoint that can actually be resumed from.
+
+    Earlier checkpoints held only the network. Resuming from one restarts AdamW
+    with zeroed moments against an already-converged network, which is a
+    perturbation rather than a continuation. Keeping the optimizer state makes
+    `--init` mean what it says.
+    """
+    import torch as _torch
+
+    _torch.save(
+        {
+            "net": net.state_dict(),
+            "opt": optimizer.state_dict() if optimizer is not None else None,
+            "meta": meta or {},
+        },
+        path,
+    )
+
+
+def load_checkpoint(path, map_location="cpu") -> tuple[dict, dict | None, dict]:
+    """Read either checkpoint format.
+
+    Returns `(net_state, optimizer_state, meta)`. Older files are a bare
+    `state_dict`, and every tool that plays the network has to keep reading them.
+    """
+    import torch as _torch
+
+    blob = _torch.load(path, map_location=map_location)
+    if isinstance(blob, dict) and "net" in blob:
+        return blob["net"], blob.get("opt"), blob.get("meta", {})
+    return blob, None, {}
+
+
 def losses(
     policy_logits: torch.Tensor,
     wdl_logits: torch.Tensor,

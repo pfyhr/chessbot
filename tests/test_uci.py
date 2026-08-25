@@ -82,10 +82,14 @@ def test_reports_mate_when_it_has_one(engine):
 
 
 def test_switching_generation_changes_the_engine(engine):
-    """The Generation option is how a GUI picks which checkpoint to play."""
-    gens = sorted(int(p.name[3:6]) for p in (REPO / "runs").glob("*/gen*.pt"))
-    engine.configure({"Generation": gens[0]})
+    """The Generation option is how a GUI picks which checkpoint to play.
+
+    The range comes from the engine's own advertised option rather than from
+    globbing the filesystem: the engine picks the most recently trained run, so a
+    generation number that exists in some *other* run is not necessarily valid.
+    """
+    option = engine.options["Generation"]
     board = chess.Board()
-    assert engine.play(board, chess.engine.Limit(nodes=32)).move in board.legal_moves
-    engine.configure({"Generation": gens[-1]})
-    assert engine.play(board, chess.engine.Limit(nodes=32)).move in board.legal_moves
+    for gen in (option.min, option.max):
+        engine.configure({"Generation": gen})
+        assert engine.play(board, chess.engine.Limit(nodes=32)).move in board.legal_moves
