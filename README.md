@@ -198,9 +198,27 @@ suite, so training had made the engine worse at mates than knowing nothing.
 **Wider root search** (+160): with 16 root actions and ~40 legal moves the winning
 move is often never sampled. Doubling to 32 wins on *fewer* evaluations.
 
-Still unexplained: opening preference swings rather than converging, often ending
-below its 0.200 random baseline. Four hypotheses have failed — replay window, learning
-rate, value-target quality, search width.
+## What it is worth
+
+Every figure above is relative. `fastchess` and a purpose-built random-mover UCI engine
+put four players on one scale ([report](bench/results/2026-08-24-external-rating.md)):
+
+| engine | Elo | score |
+|---|---:|---:|
+| Stockfish, **one node** | ∞ | 100.0% |
+| chessbot gen145 | **+89** ±117 | 62.5% |
+| chessbot gen000 | −255 ±117 | 18.8% |
+| random mover | −255 ±112 | 18.8% |
+
+**~340 Elo above a random mover.** An untrained network lands indistinguishable from
+random, which is where it belongs and a good check on the scale. The random mover had to
+be built because no Stockfish setting is weak enough — limited to one node it still runs
+NNUE over every root move and won 72 of 72.
+
+The opening "instability" is also resolved: the metric read the **raw policy**, which
+really does prefer 1.g4. After search the engine plays 1.e4 with 69.5% of the mass. Four
+hypotheses were spent explaining a number that was never measuring what it was read as
+measuring — the third time a proxy has done that here.
 
 ## Compute budget
 

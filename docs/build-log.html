@@ -372,10 +372,10 @@
     <div class="eyebrow">Rust &middot; PyTorch &middot; Apple&nbsp;Silicon</div>
     <h1>An AlphaZero chess engine, built by measurement</h1>
     <p class="lede col">
-      The reinforcement-learning loop is built, proven on Connect4, and running on chess:
-      ten hours of self-play takes a randomly initialised network to <strong>+531&nbsp;Elo</strong>
-      over its own starting point, and two search fixes add <strong>+160</strong> on top of that.
-      Most of the work has been finding out which measurements were lying.
+      The reinforcement-learning loop is built, proven on Connect4, and running on chess. It
+      plays a real opening, sits about <strong>340&nbsp;Elo above a random mover</strong>, and
+      loses every single game to Stockfish limited to <em>one node</em>. Most of the work has
+      been finding out which measurements were lying &mdash; and most of them were.
     </p>
 
     <div class="tiles">
@@ -395,9 +395,9 @@
         <small>145 generations &middot; 199M evals</small>
       </div>
       <div class="tile">
-        <small>Chess, final vs initial network</small>
-        <span class="fig">+531<span class="unit">Elo</span></span>
-        <small>200 games, search on</small>
+        <small>Chess, against a random mover</small>
+        <span class="fig">+340<span class="unit">Elo</span></span>
+        <small>externally anchored, fastchess</small>
       </div>
     </div>
   </header>
@@ -493,14 +493,14 @@
           </div>
         </div>
       </div>
-      <div class="phase phase-ahead">
-        <div class="phase-id">4</div>
+      <div class="phase phase-done">
+        <div class="phase-id">4 &#189;</div>
         <div>
           <div class="phase-name">UCI, time-ladder, SPRT</div>
           <div class="phase-note">
-            Checkpoints on a wall-clock schedule, so &ldquo;how good was it after ten minutes?&rdquo;
-            is playable. Also SPRT: every Elo figure here comes from a 200-game match with no
-            significance test, and &plusmn;25&nbsp;Elo of standard error.
+            UCI engine done, and with it fastchess and any chess GUI &mdash; which is where the
+            external rating in section&nbsp;07 came from. The wall-clock time-ladder is still
+            ahead, as is running SPRT rather than reading fixed-length matches.
           </div>
         </div>
       </div>
@@ -717,12 +717,12 @@
             </small></p>
           </div>
           <div>
-            <h3>Opening preference &nbsp;<span class="muted">unexplained</span></h3>
+            <h3>Chasing a metric that measured the wrong thing</h3>
             <p><small class="muted">
-              Policy mass on the sound first moves swings rather than converges, and often ends
-              <em>below</em> the 0.200 random baseline. Four hypotheses have failed: replay
-              window, learning rate, value-target quality, and search width. There is no working
-              theory.
+              Policy mass on the sound first moves swung wildly and often ended <em>below</em> the
+              0.200 random baseline. Four hypotheses were spent on it &mdash; replay window,
+              learning rate, value-target quality, search width &mdash; and all four failed,
+              because there was nothing wrong. See section&nbsp;07.
             </small></p>
           </div>
         </div>
@@ -840,19 +840,101 @@ after    tactics 0.347   centre <b>0.399</b>   vs-prev <b>0.740</b></pre>
   </section>
 
   <section>
-    <div class="sec-head"><span class="eyebrow">07</span><h2>Play it</h2></div>
+    <div class="sec-head"><span class="eyebrow">07</span><h2>What it is actually worth</h2></div>
     <div class="col stack">
       <p>
-        Every generation is a saved checkpoint, so &ldquo;how good was it after N
-        generations?&rdquo; is a question you answer by playing it. The staircase steps up when
-        you win and back when you lose, so it finds your level in a handful of games instead
-        of forty.
+        Every figure above is <em>relative</em> &mdash; generation N against generation 0, or
+        against a random mover through our own match code. A UCI engine makes external
+        measurement possible, so four players were put on one scale with `fastchess`.
+      </p>
+    </div>
+
+    <div class="row" style="margin-top:18px; align-items:stretch">
+      <div class="panel" style="flex:1 1 380px">
+        <div class="panel-bar"><span class="eyebrow">Round robin &middot; 72 games each</span></div>
+        <div class="panel-body table-scroll">
+          <table>
+            <thead><tr><th>Engine</th><th>Elo</th><th>Score</th></tr></thead>
+            <tbody>
+              <tr><td>Stockfish, <strong>one node</strong></td><td class="win">&infin;</td><td class="win">100.0%</td></tr>
+              <tr><td>chessbot gen145</td><td class="win">+89 &plusmn;117</td><td>62.5%</td></tr>
+              <tr><td>chessbot gen000</td><td>&minus;255 &plusmn;117</td><td>18.8%</td></tr>
+              <tr><td>random mover</td><td>&minus;255 &plusmn;112</td><td>18.8%</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="panel-note"><small>
+          <strong>About 340 Elo above a random mover.</strong> Two things make the scale
+          trustworthy: an untrained network lands statistically indistinguishable from random,
+          which is exactly where it belongs; and the random mover had to be <em>built</em>,
+          because no Stockfish setting is weak enough to measure against. Limited to a single
+          node it still evaluates every root move with NNUE, and won 72 of 72.
+        </small></div>
+      </div>
+
+      <div class="panel" style="flex:1 1 280px">
+        <div class="panel-bar"><span class="eyebrow">The opening, finally explained</span></div>
+        <div class="panel-body table-scroll">
+          <table>
+            <thead><tr><th></th><th>raw policy</th><th>after search</th></tr></thead>
+            <tbody>
+              <tr><td>1.e4</td><td>4.4%</td><td class="win">69.5%</td></tr>
+              <tr><td>1.g4</td><td class="win">61.4%</td><td>0.1%</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="panel-note"><small>
+          The <code>opening</code> metric read the <em>raw</em> policy, which really does prefer
+          1.g4. The engine plays 1.e4. Four hypotheses were spent explaining an instability in a
+          number that was never measuring what it was read as measuring.
+        </small></div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-bar"><span class="eyebrow">The recurring mistake</span></div>
+      <div class="panel-body col">
+        <p>
+          Three times now a proxy has sent this project chasing a problem that was not there:
+          <strong>opening mass</strong> (measuring the raw policy, not the engine),
+          <strong>vs-prev</strong> (returning exactly 0.500 for twenty-two generations because
+          the ply cap made every game a draw), and most recently <strong>rising losses and
+          falling material</strong> after a resume &mdash; which read as a network degrading.
+        </p>
+        <p>
+          It was not. A head-to-head against its own starting point put it
+          <strong>+83&nbsp;Elo ahead</strong>. A network that plays more solidly wins less
+          material off a blunderer, and sharper search targets are harder to fit. Both proxies
+          moved the wrong way while the thing they stood in for moved the right way.
+        </p>
+        <p style="margin-bottom:0">
+          The rule that has survived every one of these: <strong>when a proxy disagrees with
+          head-to-head play, the proxy is wrong.</strong> Material, loss curves and tactical
+          suites are worth watching, but none of them is the thing being optimised.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="eyebrow">08</span><h2>Play it</h2></div>
+    <div class="col stack">
+      <p>
+        The engine speaks UCI, so any chess GUI drives it &mdash; and every generation is a
+        saved checkpoint exposed as a UCI option, which turns the GUI itself into the
+        staircase: play generation 0, then 50, then 145, in a real interface.
+      </p>
+      <p>
+        That also bought <code>fastchess</code>, which is where section&nbsp;07's rating came
+        from, and it is how the last two protocol bugs were found. Both engines looked correct
+        in isolation; only a real GUI driving a real game exposed them.
       </p>
     </div>
     <div class="panel" style="margin-top:16px">
       <div class="panel-bar"><span class="eyebrow">Terminal</span></div>
       <div class="panel-body">
-<pre>$ python -m chessbot.play_connect4 --ladder
+<pre>$ chess-uci            # point any GUI at this
+$ python -m chessbot.play_connect4 --ladder
 
   <b>you ●</b> vs <b>gen019 ○</b>   search 32 sims
 
@@ -875,7 +957,7 @@ after    tactics 0.347   centre <b>0.399</b>   vs-prev <b>0.740</b></pre>
   </section>
 
   <section>
-    <div class="sec-head"><span class="eyebrow">08</span><h2>How far is one laptop from 5,000 TPUs?</h2></div>
+    <div class="sec-head"><span class="eyebrow">09</span><h2>How far is one laptop from 5,000 TPUs?</h2></div>
     <div class="col stack">
       <p>
         AlphaZero played 44 million games in nine hours on 5,000 TPUs. That number is

@@ -60,7 +60,7 @@
     },
     "config_name": "config.json",
     "output": 0,
-    "seed": 10696901714952826912,
+    "seed": 5123239787650569267,
     "variant": 0,
     "type": 0,
     "gauntlet_seeds": 1,
@@ -69,8 +69,8 @@
     "wait": 0,
     "autosaveinterval": 20,
     "games": 2,
-    "rounds": 12,
-    "concurrency": 5,
+    "rounds": 15,
+    "concurrency": 2,
     "force_concurrency": false,
     "recover": true,
     "noswap": false,
@@ -89,69 +89,19 @@
     },
     "engines": [
         {
-            "name": "chessbot-g145",
+            "name": "grow-g11",
             "dir": "",
             "cmd": "/Users/pontus/repos/chessbot/.venv/bin/chess-uci",
-            "args": "--device cpu",
-            "restart": false,
-            "options": [
-                [
-                    "Generation",
-                    "145"
-                ]
-            ],
-            "limit": {
-                "tc": {
-                    "increment": 80,
-                    "fixed_time": 0,
-                    "time": 8000,
-                    "moves": 0,
-                    "timemargin": 1500
-                },
-                "nodes": 0,
-                "plies": 0
-            },
-            "variant": 0
-        },
-        {
-            "name": "chessbot-g000",
-            "dir": "",
-            "cmd": "/Users/pontus/repos/chessbot/.venv/bin/chess-uci",
-            "args": "--device cpu",
-            "restart": false,
-            "options": [
-                [
-                    "Generation",
-                    "0"
-                ]
-            ],
-            "limit": {
-                "tc": {
-                    "increment": 80,
-                    "fixed_time": 0,
-                    "time": 8000,
-                    "moves": 0,
-                    "timemargin": 1500
-                },
-                "nodes": 0,
-                "plies": 0
-            },
-            "variant": 0
-        },
-        {
-            "name": "random",
-            "dir": "",
-            "cmd": "/Users/pontus/repos/chessbot/.venv/bin/random-uci",
-            "args": "",
+            "args": "--device cpu --run /Users/pontus/repos/chessbot/runs/grow",
             "restart": false,
             "options": [],
             "limit": {
                 "tc": {
-                    "increment": 80,
+                    "increment": 200,
                     "fixed_time": 0,
-                    "time": 8000,
+                    "time": 10000,
                     "moves": 0,
-                    "timemargin": 1500
+                    "timemargin": 3000
                 },
                 "nodes": 0,
                 "plies": 0
@@ -159,91 +109,36 @@
             "variant": 0
         },
         {
-            "name": "SF-1node",
+            "name": "pw32-g145",
             "dir": "",
-            "cmd": "/opt/homebrew/bin/stockfish",
-            "args": "",
+            "cmd": "/Users/pontus/repos/chessbot/.venv/bin/chess-uci",
+            "args": "--device cpu --run /Users/pontus/repos/chessbot/runs/pw-32",
             "restart": false,
             "options": [],
             "limit": {
                 "tc": {
-                    "increment": 80,
+                    "increment": 200,
                     "fixed_time": 0,
-                    "time": 8000,
+                    "time": 10000,
                     "moves": 0,
-                    "timemargin": 1500
+                    "timemargin": 3000
                 },
-                "nodes": 1,
+                "nodes": 0,
                 "plies": 0
             },
             "variant": 0
         }
     ],
     "stats": {
-        "chessbot-g000 vs SF-1node": {
-            "wins": 0,
-            "losses": 24,
-            "draws": 0,
-            "penta_WW": 0,
-            "penta_WD": 0,
-            "penta_WL": 0,
-            "penta_DD": 0,
-            "penta_LD": 0,
-            "penta_LL": 12
-        },
-        "chessbot-g000 vs random": {
-            "wins": 5,
+        "grow-g11 vs pw32-g145": {
+            "wins": 11,
             "losses": 4,
             "draws": 15,
-            "penta_WW": 0,
-            "penta_WD": 5,
-            "penta_WL": 0,
-            "penta_DD": 5,
-            "penta_LD": 0,
-            "penta_LL": 2
-        },
-        "chessbot-g145 vs SF-1node": {
-            "wins": 0,
-            "losses": 24,
-            "draws": 0,
-            "penta_WW": 0,
-            "penta_WD": 0,
-            "penta_WL": 0,
-            "penta_DD": 0,
-            "penta_LD": 0,
-            "penta_LL": 12
-        },
-        "random vs SF-1node": {
-            "wins": 0,
-            "losses": 24,
-            "draws": 0,
-            "penta_WW": 0,
-            "penta_WD": 0,
-            "penta_WL": 0,
-            "penta_DD": 0,
-            "penta_LD": 0,
-            "penta_LL": 12
-        },
-        "chessbot-g145 vs random": {
-            "wins": 22,
-            "losses": 2,
-            "draws": 0,
-            "penta_WW": 10,
-            "penta_WD": 0,
+            "penta_WW": 1,
+            "penta_WD": 7,
             "penta_WL": 2,
-            "penta_DD": 0,
-            "penta_LD": 0,
-            "penta_LL": 0
-        },
-        "chessbot-g145 vs chessbot-g000": {
-            "wins": 23,
-            "losses": 1,
-            "draws": 0,
-            "penta_WW": 11,
-            "penta_WD": 0,
-            "penta_WL": 1,
-            "penta_DD": 0,
-            "penta_LD": 0,
+            "penta_DD": 3,
+            "penta_LD": 2,
             "penta_LL": 0
         }
     }
