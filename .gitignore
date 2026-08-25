@@ -2,6 +2,12 @@
 **/*.rs.bk
 *.pdb
 
+# Build artifacts. maturin's editable install drops the compiled extension into
+# the source tree, where it is easy to commit by accident.
+*.so
+*.dylib
+*.pyd
+
 # Python
 __pycache__/
 *.py[cod]
