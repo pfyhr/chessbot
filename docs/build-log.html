@@ -373,7 +373,7 @@
     <h1>An AlphaZero chess engine, built by measurement</h1>
     <p class="lede col">
       The reinforcement-learning loop is built, proven on Connect4, and running on chess. It
-      plays a real opening, sits about <strong>340&nbsp;Elo above a random mover</strong>, and
+      plays a real opening, sits about <strong>816&nbsp;Elo above a random mover</strong>, and
       loses every single game to Stockfish limited to <em>one node</em>. Most of the work has
       been finding out which measurements were lying &mdash; and most of them were.
     </p>
@@ -396,8 +396,8 @@
       </div>
       <div class="tile">
         <small>Chess, against a random mover</small>
-        <span class="fig">+340<span class="unit">Elo</span></span>
-        <small>externally anchored, fastchess</small>
+        <span class="fig">+816<span class="unit">Elo</span></span>
+        <small>200 booked games, fastchess</small>
       </div>
     </div>
   </header>
@@ -845,30 +845,40 @@ after    tactics 0.347   centre <b>0.399</b>   vs-prev <b>0.740</b></pre>
       <p>
         Every figure above is <em>relative</em> &mdash; generation N against generation 0, or
         against a random mover through our own match code. A UCI engine makes external
-        measurement possible, so four players were put on one scale with `fastchess`.
+        measurement possible, so five players were put on one scale with
+        <code>fastchess</code>.
+      </p>
+      <p>
+        An earlier version of this table ran <strong>without an opening book</strong> and
+        reported the same network as 344&nbsp;Elo above random. The random mover's own score
+        gives the game away: <strong>18.8% unbooked, 1.2% booked</strong>. With no book and
+        near-deterministic engines every game is the same game, so one line where random
+        happened to survive was replayed dozens of times. The published figure understated the
+        engine by more than twice.
       </p>
     </div>
 
     <div class="row" style="margin-top:18px; align-items:stretch">
       <div class="panel" style="flex:1 1 380px">
-        <div class="panel-bar"><span class="eyebrow">Round robin &middot; 72 games each</span></div>
+        <div class="panel-bar"><span class="eyebrow">Round robin &middot; 200 games, with an opening book</span></div>
         <div class="panel-body table-scroll">
           <table>
             <thead><tr><th>Engine</th><th>Elo</th><th>Score</th></tr></thead>
             <tbody>
-              <tr><td>Stockfish, <strong>one node</strong></td><td class="win">&infin;</td><td class="win">100.0%</td></tr>
-              <tr><td>chessbot gen145</td><td class="win">+89 &plusmn;117</td><td>62.5%</td></tr>
-              <tr><td>chessbot gen000</td><td>&minus;255 &plusmn;117</td><td>18.8%</td></tr>
-              <tr><td>random mover</td><td>&minus;255 &plusmn;112</td><td>18.8%</td></tr>
+              <tr><td>Stockfish, <strong>one node</strong></td><td class="win">+759</td><td class="win">98.8%</td></tr>
+              <tr><td>chessbot, 24h training</td><td class="win">+57 &plusmn;93</td><td>58.1%</td></tr>
+              <tr><td>chessbot, 10h</td><td>&minus;17 &plusmn;86</td><td>47.5%</td></tr>
+              <tr><td>chessbot, 11h</td><td>&minus;39 &plusmn;95</td><td>44.4%</td></tr>
+              <tr><td>random mover</td><td>&minus;759</td><td>1.2%</td></tr>
             </tbody>
           </table>
         </div>
         <div class="panel-note"><small>
-          <strong>About 340 Elo above a random mover.</strong> Two things make the scale
-          trustworthy: an untrained network lands statistically indistinguishable from random,
-          which is exactly where it belongs; and the random mover had to be <em>built</em>,
-          because no Stockfish setting is weak enough to measure against. Limited to a single
-          node it still evaluates every root move with NNUE, and won 72 of 72.
+          <strong>About 816 Elo above a random mover</strong> &mdash; and roughly 700 below
+          Stockfish limited to a single node, which scores 98.8%. Node-limiting does not weaken
+          the part of Stockfish that is strong: it evaluates every root move with NNUE
+          regardless. There is still no Stockfish configuration weak enough to spar with, which
+          is why the random mover had to be built.
         </small></div>
       </div>
 
@@ -902,15 +912,18 @@ after    tactics 0.347   centre <b>0.399</b>   vs-prev <b>0.740</b></pre>
           falling material</strong> after a resume &mdash; which read as a network degrading.
         </p>
         <p>
-          It was not. A head-to-head against its own starting point put it
-          <strong>+83&nbsp;Elo ahead</strong>. A network that plays more solidly wins less
-          material off a blunderer, and sharper search targets are harder to fit. Both proxies
-          moved the wrong way while the thing they stood in for moved the right way.
+          It was not degrading &mdash; but the correction was itself overstated. That
+          head-to-head was also unbooked, and read <strong>+83&nbsp;Elo</strong>. Booked, the
+          two networks are statistically indistinguishable. The proxies said &ldquo;getting
+          worse&rdquo;; the truth is &ldquo;unchanged&rdquo;; and the number used to rebut them
+          was no better than the ones it rebutted.
         </p>
         <p style="margin-bottom:0">
-          The rule that has survived every one of these: <strong>when a proxy disagrees with
-          head-to-head play, the proxy is wrong.</strong> Material, loss curves and tactical
-          suites are worth watching, but none of them is the thing being optimised.
+          Two rules, both learned the hard way. <strong>When a proxy disagrees with
+          head-to-head play, the proxy is wrong</strong> &mdash; material, loss curves and
+          tactical suites are worth watching, but none is the thing being optimised. And
+          <strong>a match without an opening book is not a measurement</strong>: deterministic
+          engines from a fixed start position play one game, however many times you run it.
         </p>
       </div>
     </div>

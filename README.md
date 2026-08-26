@@ -205,15 +205,21 @@ put four players on one scale ([report](bench/results/2026-08-24-external-rating
 
 | engine | Elo | score |
 |---|---:|---:|
-| Stockfish, **one node** | ∞ | 100.0% |
-| chessbot gen145 | **+89** ±117 | 62.5% |
-| chessbot gen000 | −255 ±117 | 18.8% |
-| random mover | −255 ±112 | 18.8% |
+| Stockfish, **one node** | +759 | 98.8% |
+| chessbot, 24h training | **+57** ±93 | 58.1% |
+| chessbot, 10h | −17 ±86 | 47.5% |
+| chessbot, 11h | −39 ±95 | 44.4% |
+| random mover | −759 | 1.2% |
 
-**~340 Elo above a random mover.** An untrained network lands indistinguishable from
-random, which is where it belongs and a good check on the scale. The random mover had to
-be built because no Stockfish setting is weak enough — limited to one node it still runs
-NNUE over every root move and won 72 of 72.
+**~816 Elo above a random mover**, and roughly 700 below Stockfish limited to one node.
+The random mover had to be built because no Stockfish setting is weak enough — at one
+node it still runs NNUE over every root move.
+
+An earlier version of this table ran **without an opening book** and reported the same
+network as 344 Elo above random. The tell is the random mover's own score: 18.8% unbooked
+against 1.2% booked. With no book and near-deterministic engines every game is the same
+game, so one line where random survived was replayed dozens of times. **A match without an
+opening book is not a measurement.**
 
 The opening "instability" is also resolved: the metric read the **raw policy**, which
 really does prefer 1.g4. After search the engine plays 1.e4 with 69.5% of the mass. Four
