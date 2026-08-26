@@ -27,3 +27,6 @@ data/
 
 # Benchmark output is regenerated, but keep committed results under bench/results/
 bench/scratch/
+
+# Third-party papers are linked in papers/README.md, not redistributed.
+papers/*.pdf
