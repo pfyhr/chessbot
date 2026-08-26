@@ -60,7 +60,7 @@
     },
     "config_name": "config.json",
     "output": 0,
-    "seed": 9738683691145802167,
+    "seed": 272473835400482017,
     "variant": 0,
     "type": 0,
     "gauntlet_seeds": 1,
@@ -69,7 +69,7 @@
     "wait": 0,
     "autosaveinterval": 20,
     "games": 2,
-    "rounds": 25,
+    "rounds": 10,
     "concurrency": 3,
     "force_concurrency": false,
     "recover": true,
@@ -127,19 +127,178 @@
                 "plies": 0
             },
             "variant": 0
+        },
+        {
+            "name": "pw32-g145",
+            "dir": "",
+            "cmd": "/Users/pontus/repos/chessbot/.venv/bin/chess-uci",
+            "args": "--device cpu --run /Users/pontus/repos/chessbot/runs/pw-32",
+            "restart": false,
+            "options": [],
+            "limit": {
+                "tc": {
+                    "increment": 150,
+                    "fixed_time": 0,
+                    "time": 8000,
+                    "moves": 0,
+                    "timemargin": 3000
+                },
+                "nodes": 0,
+                "plies": 0
+            },
+            "variant": 0
+        },
+        {
+            "name": "random",
+            "dir": "",
+            "cmd": "/Users/pontus/repos/chessbot/.venv/bin/random-uci",
+            "args": "",
+            "restart": false,
+            "options": [],
+            "limit": {
+                "tc": {
+                    "increment": 150,
+                    "fixed_time": 0,
+                    "time": 8000,
+                    "moves": 0,
+                    "timemargin": 3000
+                },
+                "nodes": 0,
+                "plies": 0
+            },
+            "variant": 0
+        },
+        {
+            "name": "SF-1node",
+            "dir": "",
+            "cmd": "/opt/homebrew/bin/stockfish",
+            "args": "",
+            "restart": false,
+            "options": [],
+            "limit": {
+                "tc": {
+                    "increment": 150,
+                    "fixed_time": 0,
+                    "time": 8000,
+                    "moves": 0,
+                    "timemargin": 3000
+                },
+                "nodes": 1,
+                "plies": 0
+            },
+            "variant": 0
         }
     ],
     "stats": {
-        "night-g248 vs grow-g011": {
-            "wins": 31,
-            "losses": 8,
-            "draws": 11,
-            "penta_WW": 12,
-            "penta_WD": 4,
-            "penta_WL": 3,
-            "penta_DD": 2,
+        "pw32-g145 vs SF-1node": {
+            "wins": 0,
+            "losses": 19,
+            "draws": 1,
+            "penta_WW": 0,
+            "penta_WD": 0,
+            "penta_WL": 0,
+            "penta_DD": 0,
+            "penta_LD": 1,
+            "penta_LL": 9
+        },
+        "grow-g011 vs random": {
+            "wins": 20,
+            "losses": 0,
+            "draws": 0,
+            "penta_WW": 10,
+            "penta_WD": 0,
+            "penta_WL": 0,
+            "penta_DD": 0,
+            "penta_LD": 0,
+            "penta_LL": 0
+        },
+        "pw32-g145 vs random": {
+            "wins": 19,
+            "losses": 1,
+            "draws": 0,
+            "penta_WW": 9,
+            "penta_WD": 0,
+            "penta_WL": 1,
+            "penta_DD": 0,
+            "penta_LD": 0,
+            "penta_LL": 0
+        },
+        "grow-g011 vs pw32-g145": {
+            "wins": 7,
+            "losses": 7,
+            "draws": 6,
+            "penta_WW": 1,
+            "penta_WD": 3,
+            "penta_WL": 2,
+            "penta_DD": 0,
             "penta_LD": 3,
             "penta_LL": 1
+        },
+        "random vs SF-1node": {
+            "wins": 0,
+            "losses": 20,
+            "draws": 0,
+            "penta_WW": 0,
+            "penta_WD": 0,
+            "penta_WL": 0,
+            "penta_DD": 0,
+            "penta_LD": 0,
+            "penta_LL": 10
+        },
+        "grow-g011 vs SF-1node": {
+            "wins": 0,
+            "losses": 20,
+            "draws": 0,
+            "penta_WW": 0,
+            "penta_WD": 0,
+            "penta_WL": 0,
+            "penta_DD": 0,
+            "penta_LD": 0,
+            "penta_LL": 10
+        },
+        "night-g248 vs SF-1node": {
+            "wins": 0,
+            "losses": 19,
+            "draws": 1,
+            "penta_WW": 0,
+            "penta_WD": 0,
+            "penta_WL": 0,
+            "penta_DD": 0,
+            "penta_LD": 1,
+            "penta_LL": 9
+        },
+        "night-g248 vs random": {
+            "wins": 20,
+            "losses": 0,
+            "draws": 0,
+            "penta_WW": 10,
+            "penta_WD": 0,
+            "penta_WL": 0,
+            "penta_DD": 0,
+            "penta_LD": 0,
+            "penta_LL": 0
+        },
+        "night-g248 vs pw32-g145": {
+            "wins": 9,
+            "losses": 6,
+            "draws": 5,
+            "penta_WW": 2,
+            "penta_WD": 1,
+            "penta_WL": 4,
+            "penta_DD": 1,
+            "penta_LD": 2,
+            "penta_LL": 0
+        },
+        "night-g248 vs grow-g011": {
+            "wins": 12,
+            "losses": 3,
+            "draws": 5,
+            "penta_WW": 5,
+            "penta_WD": 1,
+            "penta_WL": 1,
+            "penta_DD": 1,
+            "penta_LD": 2,
+            "penta_LL": 0
         }
     }
 }
