@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import math
 import os
+import random
 import re
 import select
 import sys
@@ -113,6 +114,12 @@ class Engine:
         # must be replayed, not dropped: a GUI sends `stop`, `position` and `go`
         # back to back, and swallowing the last two desyncs it permanently.
         self.queued: list[str] = []
+        # Search seed. Gumbel noise at the root is the engine's only source of
+        # variety, so freezing the seed makes play deterministic -- and a match
+        # with no opening book then becomes two games repeated N times, scoring
+        # exactly 50% no matter which engine is better.
+        self.rng = random.Random()
+        self.searches_done = 0
         self.cache: dict[int, Net] = {}
         self.pos = cc.Position()
         # Rolling estimate of simulations per second, for time controls. Starts
@@ -333,7 +340,13 @@ class Engine:
     def run_search(self, sims: int):
         net = self.net()
         started = time.perf_counter()
-        search = cc.ChessSearch([self.pos], sims=sims, max_considered=self.root_actions, seed=0)
+        self.searches_done += 1
+        search = cc.ChessSearch(
+            [self.pos],
+            sims=sims,
+            max_considered=self.root_actions,
+            seed=self.rng.getrandbits(63),
+        )
         while (obs := search.next_batch()) is not None:
             with torch.no_grad():
                 logits, wdl = net(torch.from_numpy(obs).to(self.device))

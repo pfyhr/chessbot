@@ -22,9 +22,9 @@
         "enabled": false
     },
     "opening": {
-        "file": "",
-        "format": 2,
-        "order": 1,
+        "file": "/Users/pontus/repos/chessbot/bench/openings-4ply.epd",
+        "format": 0,
+        "order": 0,
         "plies": -1,
         "start": 1
     },
@@ -60,7 +60,7 @@
     },
     "config_name": "config.json",
     "output": 0,
-    "seed": 5123239787650569267,
+    "seed": 9738683691145802167,
     "variant": 0,
     "type": 0,
     "gauntlet_seeds": 1,
@@ -69,8 +69,8 @@
     "wait": 0,
     "autosaveinterval": 20,
     "games": 2,
-    "rounds": 15,
-    "concurrency": 2,
+    "rounds": 25,
+    "concurrency": 3,
     "force_concurrency": false,
     "recover": true,
     "noswap": false,
@@ -89,17 +89,17 @@
     },
     "engines": [
         {
-            "name": "grow-g11",
+            "name": "night-g248",
             "dir": "",
             "cmd": "/Users/pontus/repos/chessbot/.venv/bin/chess-uci",
-            "args": "--device cpu --run /Users/pontus/repos/chessbot/runs/grow",
+            "args": "--device cpu --run /Users/pontus/repos/chessbot/runs/night",
             "restart": false,
             "options": [],
             "limit": {
                 "tc": {
-                    "increment": 200,
+                    "increment": 150,
                     "fixed_time": 0,
-                    "time": 10000,
+                    "time": 8000,
                     "moves": 0,
                     "timemargin": 3000
                 },
@@ -109,17 +109,17 @@
             "variant": 0
         },
         {
-            "name": "pw32-g145",
+            "name": "grow-g011",
             "dir": "",
             "cmd": "/Users/pontus/repos/chessbot/.venv/bin/chess-uci",
-            "args": "--device cpu --run /Users/pontus/repos/chessbot/runs/pw-32",
+            "args": "--device cpu --run /Users/pontus/repos/chessbot/runs/grow",
             "restart": false,
             "options": [],
             "limit": {
                 "tc": {
-                    "increment": 200,
+                    "increment": 150,
                     "fixed_time": 0,
-                    "time": 10000,
+                    "time": 8000,
                     "moves": 0,
                     "timemargin": 3000
                 },
@@ -130,16 +130,16 @@
         }
     ],
     "stats": {
-        "grow-g11 vs pw32-g145": {
-            "wins": 11,
-            "losses": 4,
-            "draws": 15,
-            "penta_WW": 1,
-            "penta_WD": 7,
-            "penta_WL": 2,
-            "penta_DD": 3,
-            "penta_LD": 2,
-            "penta_LL": 0
+        "night-g248 vs grow-g011": {
+            "wins": 31,
+            "losses": 8,
+            "draws": 11,
+            "penta_WW": 12,
+            "penta_WD": 4,
+            "penta_WL": 3,
+            "penta_DD": 2,
+            "penta_LD": 3,
+            "penta_LL": 1
         }
     }
 }
