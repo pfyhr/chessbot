@@ -1053,6 +1053,165 @@ $ python -m chessbot.play_connect4 --ladder
     </div>
   </section>
 
+  <section>
+    <div class="sec-head"><span class="eyebrow">10</span><h2>A third of the parameters, a twentieth of the network</h2></div>
+    <div class="col stack">
+      <p>
+        The headline comparison is flattering. Ours is 11.0M parameters against AlphaZero&rsquo;s
+        33.5M &mdash; a third the size, which sounds like a reasonable place to be. Counting where
+        those parameters actually sit tells a different story.
+      </p>
+    </div>
+
+    <div class="row" style="margin-top:18px; align-items:stretch">
+      <div class="panel" style="flex:1 1 360px">
+        <div class="panel-bar"><span class="eyebrow">Where our 11.0M parameters live</span></div>
+        <div class="panel-body table-scroll">
+          <table>
+            <thead><tr><th>component</th><th>params</th><th>share</th></tr></thead>
+            <tbody>
+              <tr><td><code>policy_fc</code> &mdash; one Linear(2048, 4672)</td><td class="critical">9,572,928</td><td class="critical">87.1%</td></tr>
+              <tr><td><code>tower</code> &mdash; 6 residual blocks</td><td>1,040,400</td><td>9.5%</td></tr>
+              <tr><td><code>value_fc</code></td><td>262,272</td><td>2.4%</td></tr>
+              <tr><td><code>stem</code></td><td>103,008</td><td>0.9%</td></tr>
+              <tr><td>everything else</td><td>6,659</td><td>0.1%</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel" style="flex:1 1 260px">
+        <div class="panel-bar"><span class="eyebrow">The trunk, which is the part that reasons</span></div>
+        <div class="panel-body">
+          <div class="eyebrow">Ours &mdash; stem + tower</div>
+          <span class="fig" style="font-size:1.5rem;font-weight:600;display:block;margin:5px 0 1px">1.14M</span>
+          <small class="muted">10.4% of the network</small>
+
+          <div class="eyebrow" style="margin-top:14px">AlphaZero &mdash; 19&times;256</div>
+          <span class="fig" style="font-size:1.5rem;font-weight:600;display:block;margin:5px 0 1px">22.7M</span>
+          <small class="muted">68% of the network</small>
+
+          <div class="eyebrow" style="margin-top:14px">Real ratio</div>
+          <span class="fig critical" style="font-size:1.5rem;font-weight:600;display:block;margin:5px 0 1px">19.9&times;</span>
+          <small class="muted">not 3&times;</small>
+        </div>
+      </div>
+    </div>
+
+    <div class="col stack" style="margin-top:18px">
+      <p>
+        Eighty-seven percent of the network is a single flat projection from a 2,048-dimensional
+        bottleneck to 4,672 move logits. It performs no spatial reasoning at all: it is an output
+        layer. The convolutional trunk &mdash; the only part that composes board patterns &mdash;
+        is 1.14M parameters. Against AlphaZero&rsquo;s trunk that is not a third, it is a twentieth.
+      </p>
+      <p>
+        AlphaZero does not have this layer. Its 4,672 move encoding is 73 planes of 8&times;8, so the
+        policy head is a convolution that emits those planes directly. Our own move encoding is
+        already the same shape &mdash; <code>chess.rs</code> indexes moves as
+        <code>plane * 64 + from_square</code>, and the observation planes use that identical
+        convention &mdash; which means a <code>Conv2d(channels, 73, 1)</code> would produce exactly
+        the current policy vector, in the current order, with no reindexing anywhere.
+      </p>
+      <p>
+        That substitution costs <strong>7,081 parameters instead of 9,572,928</strong>, a factor of
+        1,352. It is tempting to conclude that 87% of the budget is therefore freed for the trunk,
+        and at a fixed parameter count that is true &mdash; 11M would buy roughly 15&times;192.
+        It is also the wrong budget. Parameters are not what binds this project; throughput is.
+      </p>
+      <p>
+        <code>policy_fc</code> is 87% of the parameters but only <strong>12% of the compute</strong>
+        (9.6M of 80.5M multiply-accumulates per position). Removing it returns 11% of the compute
+        budget, which at constant self-play speed buys about <em>one</em> additional residual block
+        &mdash; 7&times;96, not 15&times;192. A genuine 15&times;192 trunk is 9.3&times; slower per
+        position, and AlphaZero&rsquo;s 19&times;256 is 20.7&times; slower. Those are purchases of
+        compute, not free architectural wins, and they belong in the same conversation as renting a
+        GPU.
+      </p>
+      <p>
+        The argument from here was that the flat head is not merely large but <em>inefficient</em>:
+        Linear(2048, 4672) holds 9.57M independently learned weights, each move&rsquo;s row getting
+        gradient only from positions where that move was plausible, whereas a convolutional head
+        shares its filters across all 64 squares and so learns from roughly 64&times; more of the
+        data. It predicted that swapping the head would win, or at worst tie at 7.3&times; fewer
+        parameters.
+      </p>
+
+      <div class="panel" style="margin-top:14px">
+        <div class="panel-bar"><span class="eyebrow">Measured &middot; two arms, 12.0h each, from scratch, matched contention</span></div>
+        <div class="panel-body table-scroll">
+          <table>
+            <thead><tr><th></th><th>score</th><th>Elo</th></tr></thead>
+            <tbody>
+              <tr><td>conv-g180 vs fc-g172</td><td>37.8%</td><td class="critical">&minus;87 &plusmn;42</td></tr>
+              <tr><td>conv-g180 vs pw32-g145</td><td>47.0%</td><td>&minus;21 &plusmn;67</td></tr>
+              <tr><td>fc-g172 vs pw32-g145</td><td>64.0%</td><td class="win">+100 &plusmn;68</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <p style="margin-top:14px">
+        <strong>The prediction was wrong.</strong> The convolutional head lost by 87 Elo directly,
+        and the two independent cross-checks differ by 121 Elo in the same direction. Those 9.57M
+        parameters were buying something.
+      </p>
+      <p>
+        The mechanism appears to be reach rather than size. Final <code>policy_loss</code> was
+        <strong>2.573 for conv against 2.268 for fc</strong> &mdash; the conv head simply fits the
+        improved-policy target worse. It is spatially <em>local</em>: the logits for moves leaving a
+        square are computed from a 3&times;3 neighbourhood of it. The flat head is fully
+        <em>global</em>, every one of its 4,672 logits a learned function of all 64 squares at once.
+        Whether a move from a1 is good depends on the whole board, and at 6&times;96 the trunk
+        evidently has not mixed enough global context into each square for a local head to suffice.
+        AlphaZero can use one because its 19&times;256 trunk has. Removing the flat head did not free
+        wasted capacity &mdash; it removed the network&rsquo;s only global mixing.
+      </p>
+      <p>
+        That reasoning produced two predictions, and on 2026-09-25 both were tested against each
+        other in one 1000-game round robin. Both failed.
+      </p>
+
+      <div class="panel" style="margin-top:14px">
+        <div class="panel-bar"><span class="eyebrow">Measured &middot; 5 engines, 1000 games, 400 per engine, generation-matched at 180</span></div>
+        <div class="panel-body table-scroll">
+          <table>
+            <thead><tr><th>engine</th><th>Elo</th><th>vs A</th></tr></thead>
+            <tbody>
+              <tr><td>A-flat &mdash; the incumbent</td><td class="win">+112 &plusmn;32</td><td>&mdash;</td></tr>
+              <tr><td>pw32-g145 &mdash; anchor</td><td>+39 &plusmn;31</td><td>&minus;73</td></tr>
+              <tr><td>B-conv</td><td>&minus;13 &plusmn;32</td><td>&minus;125</td></tr>
+              <tr><td>C-narrow &mdash; reach kept, capacity cut</td><td class="critical">&minus;21 &plusmn;33</td><td class="critical">&minus;133</td></tr>
+              <tr><td>D-attn &mdash; global mixing in every trunk block</td><td class="critical">&minus;118 &plusmn;33</td><td class="critical">&minus;230</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <p style="margin-top:14px">
+        <strong>The global-mixing explanation is wrong.</strong> C keeps the flat head&rsquo;s full
+        reach and cuts only its capacity, from 9.57M parameters to 2.39M. It lost 133 Elo, so
+        capacity is doing real work. And D put global mixing into all six trunk blocks, which by the
+        hypothesis should have made the small conv head sufficient &mdash; it finished <em>last</em>,
+        105 Elo below B, whose trunk has no global mixing whatsoever. Two experiments pushing in
+        opposite directions returned the same verdict.
+      </p>
+      <p>
+        What survives is the arithmetic, not the story. <code>policy_fc</code> really is 87% of the
+        parameters, <code>SEBlock</code> really cannot relate two squares, and B really does lose to
+        A &mdash; now confirmed twice. Those facts are just not connected the way this section
+        argued. The flat head earns its parameters as capacity, and reach is not the mechanism.
+      </p>
+      <p>
+        Meanwhile the compute gap is unchanged and unambiguous &mdash; 415,488 games against
+        AlphaZero&rsquo;s 44 million is 0.94% &mdash; and that one is bought with money rather than
+        cleverness. Three architectural rearrangements have now failed to beat the network that was
+        sized by guesswork, which is itself informative: at this scale the parameters are not the
+        binding constraint, and the search for a cleverer shape has cost more than it has returned.
+      </p>
+    </div>
+  </section>
+
 </div>
 
 <script>

@@ -1,14 +1,33 @@
 # Status
 
-_Last updated 2026-08-28. Nothing is running; the machine is idle._
+_Last updated 2026-09-25. **Nothing is running; the machine is idle.**
+
+Two results landed today.
+
+**The policy-head search is over, and the incumbent won.** A 1000-game round robin
+(400 per engine) ranks `A-flat` +112 ±32, ahead of the `pw32-g145` anchor at +39,
+with `B-conv` −13, `C-narrow` −21 and `D-attn` −118. Three architectural
+rearrangements have now failed to beat the 6×96 flat-head network. The
+"global mixing" explanation is refuted — see
+`bench/results/2026-09-25-policy-head-round-robin.md`.
+
+**There is a calibrated opponent for the first time.** `lc0` with a 16×2 net
+(`runs/nets/11258-16x2-se-4.pb.gz`) at **1 node** scores 62.5% against
+`weekend/gen1371` — i.e. we score 37.5%, squarely inside a measurable band, where
+Stockfish and every strong net saturate. Use **fixed nodes, not a time control**:
+both engines honour `go nodes`, which makes matches reproducible on a busy
+machine. See `bench/results/2026-09-25-first-calibrated-opponent.md`._
 
 ## Where it stands
 
-A working AlphaZero-style loop, trained for about **24 hours total** on one M2 Max.
+A working AlphaZero-style loop, trained for about **77 hours total** on one M2 Max.
 
-**Strongest network: `runs/night/gen248.pt`** — ~816 Elo above a random mover, ~700 Elo
-below Stockfish limited to a single node. It plays a real opening (1.e4 with 69.5% of the
-policy mass after search) and then hangs pieces.
+**Strongest network: `runs/weekend/gen1371.pt`** — **+220 ±95 Elo above `night/gen248`**
+(booked ladder, 2026-09-20), which is itself ~816 above a random mover. Do not add those
+two numbers and publish the total: see `bench/results/2026-09-20-weekend-resume.md` for why
+the random-mover anchor is saturated and the sum is not a measurement.
+
+It still plays a real opening and then hangs pieces; a human who knows the rules beats it.
 
 ```
 .venv/bin/chess-uci                  # UCI engine — point any GUI at this
