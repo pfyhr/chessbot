@@ -58,6 +58,9 @@ def selfplay_generation(net, device: str, args, seed: int):
         max_considered=args.considered,
         max_plies=args.max_plies,
         seed=seed,
+        pcr_prob=args.pcr_prob,
+        fast_sims=args.fast_sims,
+        fast_considered=args.fast_considered,
     )
 
     while (obs := sp.next_batch()) is not None:
@@ -69,9 +72,9 @@ def selfplay_generation(net, device: str, args, seed: int):
             np.ascontiguousarray(values.astype(np.float32)),
         )
 
-    obs, policy, z, mask = sp.take_training_data()
+    obs, policy, z, mask, pmask = sp.take_training_data()
     # float16 in the buffer: full precision here would be ~4 GB per generation.
-    return (obs.astype(np.float16), policy.astype(np.float16), z, mask), sp.stats()
+    return (obs.astype(np.float16), policy.astype(np.float16), z, mask, pmask), sp.stats()
 
 
 def train_steps(net, opt, buffer, args, device: str) -> dict[str, float]:
@@ -80,6 +83,7 @@ def train_steps(net, opt, buffer, args, device: str) -> dict[str, float]:
     pol = np.concatenate([b[1] for b in buffer])
     z = np.concatenate([b[2] for b in buffer])
     vmask = np.concatenate([b[3] for b in buffer])
+    pmask = np.concatenate([b[4] for b in buffer])
 
     n = len(obs)
     rng = np.random.default_rng(0)
@@ -91,9 +95,12 @@ def train_steps(net, opt, buffer, args, device: str) -> dict[str, float]:
         pt = torch.from_numpy(pol[idx].astype(np.float32)).to(device)
         zt = torch.from_numpy(z[idx]).to(device)
         mt = None if args.no_value_mask else torch.from_numpy(vmask[idx]).to(device)
+        # Only masked when PCR is on; otherwise every position is a policy target
+        # and passing a mask of ones would only cost a multiply.
+        pm = torch.from_numpy(pmask[idx]).to(device) if args.pcr_prob > 0 else None
 
         policy_logits, wdl = net(x)
-        p_loss, v_loss = losses(policy_logits, wdl, pt, zt, mt)
+        p_loss, v_loss = losses(policy_logits, wdl, pt, zt, mt, pm)
         loss = p_loss + v_loss
 
         opt.zero_grad(set_to_none=True)
@@ -109,6 +116,7 @@ def train_steps(net, opt, buffer, args, device: str) -> dict[str, float]:
         "value_loss": v_tot / args.steps,
         "samples": n,
         "known_fraction": float(vmask.mean()),
+        "policy_target_fraction": float(pmask.mean()),
     }
 
 
@@ -139,6 +147,27 @@ def main() -> None:
     ap.add_argument("--lr", type=float, default=5e-4)
     ap.add_argument("--blocks", type=int, default=6)
     ap.add_argument("--channels", type=int, default=96)
+    # Playout cap randomization. The full budget must be large enough that
+    # sequential halving actually runs: at max_considered m, the first phase
+    # alone costs m simulations, so sims must exceed m for a second phase to
+    # exist at all. At --sims 32 --considered 32 it never does.
+    ap.add_argument("--pcr-prob", type=float, default=0.0,
+                    help="fraction of moves given the full budget and used as "
+                         "policy targets; 0 disables PCR entirely")
+    ap.add_argument("--fast-sims", type=int, default=8,
+                    help="simulations for the cheap majority of moves")
+    ap.add_argument("--fast-considered", type=int, default=8,
+                    help="root actions for cheap moves; must not exceed "
+                         "--fast-sims or some contenders never get a visit")
+    ap.add_argument("--trunk", choices=["res", "attn"], default="res",
+                    help="attn puts global mixing in every trunk block instead "
+                         "of only in the flat output layer")
+    ap.add_argument("--policy-bottleneck", type=int, default=32,
+                    help="channels the flat head squeezes through before its "
+                         "Linear; 8 cuts that layer from 9.57M to 2.39M params")
+    ap.add_argument("--policy-head", choices=["fc", "conv"], default="fc",
+                    help="conv is AlphaZero's: 73 planes from a convolution "
+                         "rather than one Linear holding 87%% of the parameters")
     ap.add_argument("--window", type=int, default=8)
     ap.add_argument("--eval-games", type=int, default=60)
     ap.add_argument("--tactics", type=int, default=200)
@@ -153,7 +182,9 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
 
     planes, h, w = cc.OBS_SHAPE
-    net = Net(planes, (h, w), cc.POLICY_LEN, args.blocks, args.channels).to(device)
+    net = Net(planes, (h, w), cc.POLICY_LEN, args.blocks, args.channels,
+              policy_head=args.policy_head, trunk=args.trunk,
+              policy_bottleneck=args.policy_bottleneck).to(device)
     if args.init:
         # Continuing beats restarting: every run so far has thrown away the
         # hours before it, and the network is the only thing worth keeping.
@@ -168,7 +199,12 @@ def main() -> None:
             opt.load_state_dict(opt_state)
     params = sum(p.numel() for p in net.parameters())
 
-    print(f"device={device}  net={args.blocks}x{args.channels} ({params/1e6:.2f}M params)")
+    print(f"device={device}  net={args.blocks}x{args.channels} ({params/1e6:.2f}M params)"
+          + (f"  pcr={args.pcr_prob:.2f} full={args.sims}/{args.considered} "
+             f"fast={args.fast_sims}/{args.fast_considered}" if args.pcr_prob > 0 else "")
+          + "\n"
+          f"  trunk={args.trunk}  policy_head={args.policy_head}"
+          f"  bottleneck={args.policy_bottleneck}")
     print(f"sims={args.sims}  games/gen={args.games}  max_plies={args.max_plies}")
     print(f"window={args.window}  lr={args.lr}  "
           f"value_mask={'off' if args.no_value_mask else 'on'}"
@@ -204,8 +240,10 @@ def main() -> None:
             break
         gen_start = time.time()
 
-        (obs, pol, z, vmask), stats = selfplay_generation(net, device, args, seed=7000 + gen)
-        buffer.append((obs, pol, z, vmask))
+        (obs, pol, z, vmask, pmask), stats = selfplay_generation(
+            net, device, args, seed=7000 + gen
+        )
+        buffer.append((obs, pol, z, vmask, pmask))
         losses_ = train_steps(net, opt, buffer, args, device)
 
         net.eval()

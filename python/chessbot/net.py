@@ -49,6 +49,80 @@ class ResBlock(nn.Module):
         return F.relu(x + y)
 
 
+class AttnBlock(nn.Module):
+    """Pre-norm transformer block over the board's 64 squares.
+
+    A convolution relates two squares only by relaying through the squares
+    between them, and squeeze-excitation pools the board flat and broadcasts one
+    modulation everywhere -- so neither can express that the bishop on a1 bears
+    on the king on h8. Attention says it in a single layer.
+
+    At 64 tokens it is also the cheaper layer: 7.9M multiply-accumulates against
+    a residual block's 10.6M, with the quadratic term that makes attention
+    expensive elsewhere costing 10% of the block. A chess board is short enough
+    that the usual trade does not apply.
+    """
+
+    def __init__(self, channels: int, heads: int = 4, mult: int = 4):
+        super().__init__()
+        self.heads = heads
+        self.n1 = nn.LayerNorm(channels)
+        # Projections written out rather than nn.MultiheadAttention so the
+        # fused scaled_dot_product_attention kernel is reachable: measured 23%
+        # faster on MPS, which is small but free.
+        self.attn_qkv = nn.Linear(channels, 3 * channels)
+        self.attn_proj = nn.Linear(channels, channels)
+        self.n2 = nn.LayerNorm(channels)
+        self.ff = nn.Sequential(
+            nn.Linear(channels, mult * channels),
+            nn.GELU(),
+            nn.Linear(mult * channels, channels),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        b, n, c = x.shape
+        q, k, v = (
+            self.attn_qkv(self.n1(x))
+            .reshape(b, n, 3, self.heads, c // self.heads)
+            .permute(2, 0, 3, 1, 4)
+            .unbind(0)
+        )
+        o = F.scaled_dot_product_attention(q, k, v).transpose(1, 2).reshape(b, n, c)
+        x = x + self.attn_proj(o)
+        return x + self.ff(self.n2(x))
+
+
+class ConvPolicyHead(nn.Module):
+    """AlphaZero's policy head: a convolution emitting one plane per move type.
+
+    The flat policy index is `plane * 64 + from_square` (see `chess.rs`), which
+    is exactly the order a `(planes, H, W)` tensor flattens to, so this drops in
+    with no reindexing anywhere.
+
+    It replaces a `Linear(32*H*W, policy_len)` holding 87% of the network's
+    parameters while doing no spatial reasoning. The saving is ~106x, but the
+    point is weight sharing: a Linear learns each move's row independently, from
+    only those positions where that move was plausible, whereas these filters
+    see all 64 squares of every position.
+
+    Only usable when `policy_len` is a whole number of board-sized planes --
+    true for chess (4672 = 73*64), false for Connect4 (7 vs 42), which keeps
+    the fully-connected path.
+    """
+
+    def __init__(self, channels: int, planes: int):
+        super().__init__()
+        self.body = nn.Sequential(
+            nn.Conv2d(channels, channels, 3, padding=1, bias=False),
+            nn.BatchNorm2d(channels),
+            nn.ReLU(),
+        )
+        self.out = nn.Conv2d(channels, planes, 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.out(self.body(x)).flatten(1)
+
+
 class Net(nn.Module):
     """Policy + WDL over an arbitrary (C, H, W) board."""
 
@@ -59,20 +133,41 @@ class Net(nn.Module):
         policy_len: int,
         blocks: int = 4,
         channels: int = 64,
+        policy_head: str = "fc",
+        trunk: str = "res",
+        policy_bottleneck: int = 32,
     ):
         super().__init__()
         h, w = board
+        self.head_kind = policy_head
+        self.trunk_kind = trunk
         self.stem = nn.Sequential(
             nn.Conv2d(in_planes, channels, 3, padding=1, bias=False),
             nn.BatchNorm2d(channels),
             nn.ReLU(),
         )
-        self.tower = nn.Sequential(*[ResBlock(channels) for _ in range(blocks)])
+        if trunk == "attn":
+            self.tower = nn.Sequential(*[AttnBlock(channels) for _ in range(blocks)])
+            # Attention is permutation-invariant: without this the network cannot
+            # tell a1 from h8 at all. One learned vector per square.
+            self.pos = nn.Parameter(torch.zeros(1, h * w, channels))
+            nn.init.normal_(self.pos, std=0.02)
+        else:
+            self.tower = nn.Sequential(*[ResBlock(channels) for _ in range(blocks)])
 
-        self.policy_conv = nn.Sequential(
-            nn.Conv2d(channels, 32, 1, bias=False), nn.BatchNorm2d(32), nn.ReLU()
-        )
-        self.policy_fc = nn.Linear(32 * h * w, policy_len)
+        if policy_head == "conv":
+            if policy_len % (h * w):
+                raise ValueError(
+                    f"conv policy head needs policy_len ({policy_len}) to be a "
+                    f"multiple of the board ({h}x{w}={h * w})"
+                )
+            self.policy_head = ConvPolicyHead(channels, policy_len // (h * w))
+        else:
+            b = policy_bottleneck
+            self.policy_conv = nn.Sequential(
+                nn.Conv2d(channels, b, 1, bias=False), nn.BatchNorm2d(b), nn.ReLU()
+            )
+            self.policy_fc = nn.Linear(b * h * w, policy_len)
 
         self.value_conv = nn.Sequential(
             nn.Conv2d(channels, 32, 1, bias=False), nn.BatchNorm2d(32), nn.ReLU()
@@ -81,8 +176,19 @@ class Net(nn.Module):
         self.wdl = nn.Linear(128, 3)
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        x = self.tower(self.stem(x))
-        p = self.policy_fc(self.policy_conv(x).flatten(1))
+        x = self.stem(x)
+        if self.trunk_kind == "attn":
+            b, c, h, w = x.shape
+            # (B,C,H,W) -> (B,HW,C): token i is square i, matching the
+            # `plane * 64 + square` order the Rust core encodes everything in.
+            t = self.tower(x.flatten(2).transpose(1, 2) + self.pos)
+            x = t.transpose(1, 2).reshape(b, c, h, w)
+        else:
+            x = self.tower(x)
+        if self.head_kind == "conv":
+            p = self.policy_head(x)
+        else:
+            p = self.policy_fc(self.policy_conv(x).flatten(1))
         v = self.value_fc(self.value_conv(x).flatten(1))
         return p, self.wdl(v)
 
@@ -132,12 +238,58 @@ def load_checkpoint(path, map_location="cpu") -> tuple[dict, dict | None, dict]:
     return blob, None, {}
 
 
+def infer_arch(state: dict) -> dict:
+    """Recover blocks, channels and policy-head kind from the weights themselves.
+
+    Every tool that plays a network took --blocks/--channels on the command line
+    and built whatever shape those said, so a mismatch with the file on disk
+    surfaced as an unreadable load error at best. The checkpoint already knows
+    what it is; two architectures now coexist, so it has to be asked.
+    """
+    channels = state["stem.0.weight"].shape[0]
+    tower = [int(k.split(".")[1]) for k in state if k.startswith("tower.")]
+    blocks = max(tower) + 1 if tower else 0
+    head = "conv" if any(k.startswith("policy_head.") for k in state) else "fc"
+    # Keyed on a parameter only AttnBlock has. A looser match (".attn.") broke
+    # silently when the projections were renamed, and a checkpoint that loads as
+    # the wrong architecture is a run thrown away.
+    trunk = "attn" if any("attn_qkv" in k for k in state) else "res"
+    # The flat head's bottleneck width is configurable, so read it rather than
+    # assume the 32 it happened to be when only one width existed.
+    bottleneck = (
+        state["policy_conv.0.weight"].shape[0] if "policy_conv.0.weight" in state else 32
+    )
+    return {
+        "blocks": blocks,
+        "channels": channels,
+        "policy_head": head,
+        "trunk": trunk,
+        "policy_bottleneck": bottleneck,
+    }
+
+
+def net_from_checkpoint(path, planes, board, policy_len, device="cpu"):
+    """Build the network a checkpoint actually contains, and load it."""
+    state, _, _ = load_checkpoint(path, device)
+    arch = infer_arch(state)
+    net = Net(
+        planes, board, policy_len,
+        arch["blocks"], arch["channels"],
+        policy_head=arch["policy_head"],
+        trunk=arch["trunk"],
+        policy_bottleneck=arch["policy_bottleneck"],
+    ).to(device)
+    net.load_state_dict(state)
+    return net, arch
+
+
 def losses(
     policy_logits: torch.Tensor,
     wdl_logits: torch.Tensor,
     policy_target: torch.Tensor,
     z: torch.Tensor,
     value_mask: torch.Tensor | None = None,
+    policy_mask: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Cross-entropy against the search's improved policy, and against the result.
 
@@ -151,9 +303,24 @@ def losses(
 
     The *policy* target survives truncation untouched. The search's improved policy
     is a statement about the position, not about how the game later ended.
+
+    `policy_mask` is the mirror image, and zeroes the *policy* term for moves that
+    playout cap randomization played on the cheap budget. A search that shallow is
+    not worth imitating: the loop only improves because search beats the raw
+    network, and at eight simulations it barely does. Those positions keep their
+    value target, because the game result is just as true there -- which is the
+    whole reason cheap moves are worth playing.
+
+    The two masks are independent. A position can have a trustworthy policy target
+    and an invented result, or an honest result and a policy target too cheap to
+    learn from.
     """
     logp = F.log_softmax(policy_logits, dim=-1)
-    policy_loss = -(policy_target * logp).sum(dim=-1).mean()
+    per_policy = -(policy_target * logp).sum(dim=-1)
+    if policy_mask is None:
+        policy_loss = per_policy.mean()
+    else:
+        policy_loss = (per_policy * policy_mask).sum() / policy_mask.sum().clamp(min=1.0)
 
     per_position = F.cross_entropy(wdl_logits, z_to_wdl_target(z), reduction="none")
     if value_mask is None:

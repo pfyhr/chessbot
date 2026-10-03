@@ -26,7 +26,7 @@ import numpy as np
 import torch
 
 from ._webui import PAGE
-from .net import Net, load_checkpoint
+from .net import Net, load_checkpoint, net_from_checkpoint
 
 
 class Game:
@@ -177,8 +177,9 @@ class NetCache:
     def get(self, gen: int) -> Net:
         if gen not in self.cache:
             planes, h, w = cc.OBS_SHAPE
-            net = Net(planes, (h, w), cc.POLICY_LEN, self.blocks, self.channels).to(self.device)
-            net.load_state_dict(load_checkpoint(self.paths[gen], self.device)[0])
+            net, _ = net_from_checkpoint(
+                self.paths[gen], planes, (h, w), cc.POLICY_LEN, self.device
+            )
             self.cache[gen] = net.eval()
         return self.cache[gen]
 

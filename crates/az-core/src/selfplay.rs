@@ -26,6 +26,27 @@ use crate::mcts::{Config, Rng, Search, Status};
 
 /// One training example: a position, the search's improved policy, and the
 /// eventual game result from that position's mover's point of view.
+/// Playout cap randomization (KataGo, Wu 2019), adapted to a Gumbel search.
+///
+/// Value targets want many games, so they want cheap moves. Policy targets want
+/// a search worth imitating, so they want expensive ones. AlphaZero resolves
+/// this by paying the expensive price everywhere. PCR instead plays most moves
+/// cheaply and takes policy targets only from the rare expensive ones.
+///
+/// The Gumbel-specific part is choosing `full.sims`. Sequential halving spends
+/// `sims / (phases * m)` visits per contender per phase, floored to one -- so at
+/// `sims == m` the whole budget goes on a single pass and **halving never runs**.
+/// At m = 32 that is exactly our default, and the cheap path leans into it
+/// (narrow shortlist, one visit each) while the full path is sized so halving
+/// actually executes.
+#[derive(Debug, Clone, Copy)]
+pub struct Pcr {
+    /// Probability that a move gets the full budget and yields a policy target.
+    pub prob: f32,
+    /// Search settings for the cheap majority of moves.
+    pub fast: Config,
+}
+
 pub struct Sample<G: Game> {
     pub pos: G,
     /// Sparse `(policy_index, probability)`. Dense would be 4672 floats per ply
@@ -35,6 +56,12 @@ pub struct Sample<G: Game> {
     pub z: f32,
     /// Search's value estimate at this position, for diagnostics.
     pub root_value: f32,
+    /// 1.0 when this position was searched at the full budget and its policy
+    /// target is worth training on; 0.0 when it came from a cheap move.
+    ///
+    /// Cheap positions still carry a value target -- the game result is just as
+    /// true for them -- which is the entire point of the split.
+    pub policy_mask: f32,
 }
 
 pub struct Trajectory<G: Game> {
@@ -56,10 +83,15 @@ struct Slot<G: Game> {
     search: Search<G>,
     samples: Vec<Sample<G>>,
     live: bool,
+    /// Whether the search currently in flight was given the full budget.
+    full: bool,
 }
 
 pub struct SelfPlay<G: Game> {
     cfg: Config,
+    /// `None` reproduces the pre-PCR behaviour exactly: every move full budget,
+    /// every position a policy target.
+    pcr: Option<Pcr>,
     max_plies: usize,
     slots: Vec<Slot<G>>,
     rng: Rng,
@@ -88,6 +120,22 @@ impl<G: Game> SelfPlay<G> {
     /// Finished games are replaced immediately so the batch stays full: letting
     /// it drain would spend the tail of every run at a batch size where the GPU
     /// is idle.
+    /// Does this move get the full budget? A fresh draw per move.
+    fn roll(rng: &mut Rng, pcr: Option<Pcr>) -> bool {
+        match pcr {
+            None => true,
+            Some(p) => (rng.next_u64() >> 11) as f32 / (1u64 << 53) as f32 <= p.prob,
+        }
+    }
+
+    /// The search config a move of this kind runs under.
+    fn budget(cfg: Config, pcr: Option<Pcr>, full: bool) -> Config {
+        match pcr {
+            Some(p) if !full => p.fast,
+            _ => cfg,
+        }
+    }
+
     pub fn new(
         concurrency: usize,
         total_games: usize,
@@ -95,19 +143,34 @@ impl<G: Game> SelfPlay<G> {
         max_plies: usize,
         seed: u64,
     ) -> Self {
+        Self::with_pcr(concurrency, total_games, cfg, max_plies, seed, None)
+    }
+
+    /// As [`SelfPlay::new`], with playout cap randomization.
+    pub fn with_pcr(
+        concurrency: usize,
+        total_games: usize,
+        cfg: Config,
+        max_plies: usize,
+        seed: u64,
+        pcr: Option<Pcr>,
+    ) -> Self {
         let concurrency = concurrency.max(1).min(total_games.max(1));
         let mut rng = Rng::new(seed);
+        let first = Self::roll(&mut rng, pcr);
         let slots = (0..concurrency)
             .map(|_| Slot {
                 pos: G::initial(),
-                search: Search::new(G::initial(), cfg, &mut rng),
+                search: Search::new(G::initial(), Self::budget(cfg, pcr, first), &mut rng),
                 samples: Vec::new(),
                 live: true,
+                full: first,
             })
             .collect();
 
         Self {
             cfg,
+            pcr,
             max_plies,
             slots,
             rng,
@@ -198,11 +261,13 @@ impl<G: Game> SelfPlay<G> {
             .collect();
 
         let pos = self.slots[i].pos.clone();
+        let policy_mask = if self.slots[i].full { 1.0 } else { 0.0 };
         self.slots[i].samples.push(Sample {
             pos,
             policy,
             z: 0.0,
             root_value,
+            policy_mask,
         });
 
         self.slots[i].pos.play(mv);
@@ -217,7 +282,10 @@ impl<G: Game> SelfPlay<G> {
         }
 
         let next = self.slots[i].pos.clone();
-        self.slots[i].search = Search::new(next, self.cfg, &mut self.rng);
+        let full = Self::roll(&mut self.rng, self.pcr);
+        let cfg = Self::budget(self.cfg, self.pcr, full);
+        self.slots[i].full = full;
+        self.slots[i].search = Search::new(next, cfg, &mut self.rng);
     }
 
     fn finish_game(&mut self, i: usize, outcome: Option<Outcome>) {
@@ -262,7 +330,10 @@ impl<G: Game> SelfPlay<G> {
         if self.remaining > 0 {
             self.remaining -= 1;
             self.slots[i].pos = G::initial();
-            self.slots[i].search = Search::new(G::initial(), self.cfg, &mut self.rng);
+            let full = Self::roll(&mut self.rng, self.pcr);
+            let cfg = Self::budget(self.cfg, self.pcr, full);
+            self.slots[i].full = full;
+            self.slots[i].search = Search::new(G::initial(), cfg, &mut self.rng);
             self.slots[i].samples.clear();
         } else {
             self.slots[i].live = false;
@@ -309,6 +380,60 @@ impl<G: Game> SelfPlay<G> {
 mod tests {
     use super::*;
     use crate::connect4::Connect4;
+
+    /// As `run_flat`, with playout cap randomization.
+    fn run_pcr(pcr: Option<Pcr>) -> Vec<Trajectory<Connect4>> {
+        let cfg = Config { sims: 64, max_considered: 7, ..Config::default() };
+        let mut sp = SelfPlay::<Connect4>::with_pcr(8, 24, cfg, 42, 1234, pcr);
+        let mut obs = Vec::new();
+        let mut guard = 0;
+        loop {
+            let n = sp.next_batch(&mut obs);
+            if n == 0 {
+                break;
+            }
+            let logits = vec![0.0f32; n * Connect4::POLICY_LEN];
+            let values = vec![0.0f32; n];
+            sp.submit(&logits, &values);
+            guard += 1;
+            assert!(guard < 200_000, "driver failed to terminate");
+        }
+        sp.take_finished()
+    }
+
+    /// Without PCR every position is a policy target, exactly as before.
+    #[test]
+    fn no_pcr_marks_every_position_as_a_policy_target() {
+        let games = run_pcr(None);
+        assert!(!games.is_empty());
+        for g in &games {
+            for s in &g.samples {
+                assert_eq!(s.policy_mask, 1.0);
+            }
+        }
+    }
+
+    /// With PCR only the rare full-budget moves carry a policy target, while
+    /// every position still carries a value target -- which is the whole point.
+    #[test]
+    fn pcr_marks_roughly_the_requested_fraction() {
+        let fast = Config { sims: 8, max_considered: 4, ..Config::default() };
+        let games = run_pcr(Some(Pcr { prob: 0.25, fast }));
+        let (mut full, mut total) = (0usize, 0usize);
+        for g in &games {
+            for s in &g.samples {
+                assert!(s.policy_mask == 0.0 || s.policy_mask == 1.0);
+                full += (s.policy_mask == 1.0) as usize;
+                total += 1;
+            }
+        }
+        assert!(total > 200, "too few samples to judge: {total}");
+        let frac = full as f64 / total as f64;
+        assert!(
+            (0.15..0.35).contains(&frac),
+            "asked for 0.25 of moves at full budget, got {frac:.3}"
+        );
+    }
 
     /// Uniform policy, zero value: exercises the driver, not learning.
     fn run_flat(concurrency: usize, total: usize, sims: u32) -> Vec<Trajectory<Connect4>> {

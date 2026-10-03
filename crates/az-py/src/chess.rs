@@ -4,7 +4,7 @@ use az_core::chess::ChessPos;
 use az_core::game::obs_len;
 use az_core::game::{Game, Outcome};
 use az_core::mcts::{Config, Rng, Search, Status};
-use az_core::selfplay::SelfPlay;
+use az_core::selfplay::{Pcr, SelfPlay};
 use ndarray::{Array1, Array2, Array3, Array4};
 use numpy::{
     IntoPyArray, PyArray1, PyArray2, PyArray3, PyArray4, PyReadonlyArray1, PyReadonlyArray2,
@@ -243,6 +243,7 @@ type TrainingArrays<'py> = (
     Bound<'py, PyArray2<f32>>,
     Bound<'py, PyArray1<f32>>,
     Bound<'py, PyArray1<f32>>,
+    Bound<'py, PyArray1<f32>>,
 );
 
 /// Batched chess self-play.
@@ -260,7 +261,14 @@ pub struct PyChessSelfPlay {
 #[pymethods]
 impl PyChessSelfPlay {
     #[new]
-    #[pyo3(signature = (concurrency, total_games, sims=32, max_considered=16, max_plies=240, seed=0))]
+    /// `pcr_prob > 0` enables playout cap randomization: that fraction of moves
+    /// runs at `sims`/`max_considered` and yields a policy target, while the rest
+    /// run at `fast_sims`/`fast_considered` and yield only a value target.
+    ///
+    /// `fast_considered` must not exceed `fast_sims`, or contenders beyond the
+    /// budget never receive a single visit.
+    #[pyo3(signature = (concurrency, total_games, sims=32, max_considered=16, max_plies=240, seed=0,
+                        pcr_prob=0.0, fast_sims=8, fast_considered=8))]
     fn new(
         concurrency: usize,
         total_games: usize,
@@ -268,14 +276,25 @@ impl PyChessSelfPlay {
         max_considered: usize,
         max_plies: usize,
         seed: u64,
+        pcr_prob: f32,
+        fast_sims: u32,
+        fast_considered: usize,
     ) -> Self {
         let cfg = Config {
             sims,
             max_considered,
             ..Config::default()
         };
+        let pcr = (pcr_prob > 0.0).then(|| Pcr {
+            prob: pcr_prob,
+            fast: Config {
+                sims: fast_sims,
+                max_considered: fast_considered,
+                ..Config::default()
+            },
+        });
         Self {
-            inner: SelfPlay::new(concurrency, total_games, cfg, max_plies, seed),
+            inner: SelfPlay::with_pcr(concurrency, total_games, cfg, max_plies, seed, pcr),
             obs: Vec::new(),
             batch: 0,
         }
@@ -323,15 +342,24 @@ impl PyChessSelfPlay {
         self.inner.games_completed()
     }
 
-    /// Drain finished games as `(obs, policy, z, value_mask)`.
+    /// Drain finished games as `(obs, policy, z, value_mask, policy_mask)`.
     ///
     /// The policy target is dense over all 4672 slots, which is 18 KB per position
     /// -- large, but it is the shape the loss wants and the buffer is drained every
     /// generation.
     ///
+    /// The two masks say which of a position's two targets is trustworthy, and
+    /// they are independent of each other.
+    ///
     /// `value_mask` is zero for games stopped by the ply limit. Such a game has no
     /// result; calling it a draw would teach the value head an outcome that never
-    /// happened.
+    /// happened. Its policy target is untouched -- the search's opinion of a
+    /// position does not depend on how the game later ended.
+    ///
+    /// `policy_mask` is zero for moves played under playout cap randomization's
+    /// cheap budget. A search that shallow is not worth imitating. Its value
+    /// target is untouched -- the game result is just as true there, which is
+    /// exactly why the cheap moves are worth playing at all.
     fn take_training_data<'py>(&mut self, py: Python<'py>) -> PyResult<TrainingArrays<'py>> {
         let trajectories = self.inner.take_finished();
         let m: usize = trajectories.iter().map(|t| t.samples.len()).sum();
@@ -340,6 +368,7 @@ impl PyChessSelfPlay {
         let mut policy = vec![0.0f32; m * 4672];
         let mut z = vec![0.0f32; m];
         let mut mask = vec![0.0f32; m];
+        let mut pmask = vec![0.0f32; m];
 
         let mut i = 0;
         for t in &trajectories {
@@ -351,6 +380,7 @@ impl PyChessSelfPlay {
                 }
                 z[i] = s.z;
                 mask[i] = known;
+                pmask[i] = s.policy_mask;
                 i += 1;
             }
         }
@@ -364,6 +394,7 @@ impl PyChessSelfPlay {
                 .into_pyarray(py),
             Array1::from_vec(z).into_pyarray(py),
             Array1::from_vec(mask).into_pyarray(py),
+            Array1::from_vec(pmask).into_pyarray(py),
         ))
     }
 
