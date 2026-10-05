@@ -49,8 +49,28 @@ def pick_device(requested: str) -> str:
     return "cpu"
 
 
-def selfplay_generation(net, device: str, args, seed: int):
+def bucket_size(n: int, step: int, cap: int) -> int:
+    """Round a batch up to the next multiple of `step`.
+
+    Self-play hands the network a different batch size on almost every call --
+    mean 108, median 82, hundreds of distinct values -- because a game sits out
+    a batch whenever its leaf is terminal or its search has just finished. That
+    variation is what stops `torch.compile` fusing anything: with dynamic shapes
+    it measured *slower* than eager, while a fixed shape measured 2.22x faster.
+
+    Rounding to a handful of shapes costs ~1.27x in padded positions that get
+    computed and thrown away, and buys the fusion. Measured net: 2.08x on the
+    positions that actually count.
+    """
+    return min(cap, ((n + step - 1) // step) * step)
+
+
+def selfplay_generation(net, device: str, args, seed: int, infer=None):
+    """`infer` is the handle used for forward passes -- a compiled wrapper when
+    one is available, otherwise `net` itself. Both share parameters, so weights
+    updated by training are seen here without any copying."""
     net.eval()
+    infer = infer if infer is not None else net
     sp = cc.ChessSelfPlay(
         concurrency=args.concurrency,
         total_games=args.games,
@@ -63,10 +83,19 @@ def selfplay_generation(net, device: str, args, seed: int):
         fast_considered=args.fast_considered,
     )
 
+    step = args.batch_bucket
     while (obs := sp.next_batch()) is not None:
+        n = len(obs)
+        x = torch.from_numpy(obs).to(device)
+        if step > 1:
+            b = bucket_size(n, step, args.concurrency)
+            if b > n:
+                x = torch.cat([x, x.new_zeros(b - n, *x.shape[1:])], 0)
         with torch.no_grad():
-            logits, wdl = net(torch.from_numpy(obs).to(device))
-            values = wdl_to_scalar(wdl.float()).cpu().numpy()
+            logits, wdl = infer(x)
+        # Drop the padding rows before they reach the driver.
+        logits, wdl = logits[:n], wdl[:n]
+        values = wdl_to_scalar(wdl.float()).cpu().numpy()
         sp.submit(
             np.ascontiguousarray(logits.float().cpu().numpy()),
             np.ascontiguousarray(values.astype(np.float32)),
@@ -159,6 +188,13 @@ def main() -> None:
     ap.add_argument("--fast-considered", type=int, default=8,
                     help="root actions for cheap moves; must not exceed "
                          "--fast-sims or some contenders never get a visit")
+    ap.add_argument("--compile", dest="compile", action="store_true", default=True,
+                    help="fuse the forward with torch.compile (default on)")
+    ap.add_argument("--no-compile", dest="compile", action="store_false")
+    ap.add_argument("--batch-bucket", type=int, default=64,
+                    help="round self-play batches up to a multiple of this so "
+                         "torch.compile sees a handful of shapes rather than "
+                         "hundreds; 1 disables padding")
     ap.add_argument("--trunk", choices=["res", "attn"], default="res",
                     help="attn puts global mixing in every trunk block instead "
                          "of only in the flat output layer")
@@ -198,6 +234,17 @@ def main() -> None:
         if opt_state is not None:
             opt.load_state_dict(opt_state)
     params = sum(p.numel() for p in net.parameters())
+
+    # One compiled handle, created once and reused for every generation: the
+    # fusion is cached per shape, so only the first generation pays for it.
+    # It shares parameters with `net`, so training updates are picked up here.
+    infer = net
+    if args.compile:
+        try:
+            infer = torch.compile(net)
+        except Exception as e:  # a backend that cannot compile is not fatal
+            print(f"torch.compile unavailable ({type(e).__name__}), running eager")
+            infer = net
 
     print(f"device={device}  net={args.blocks}x{args.channels} ({params/1e6:.2f}M params)"
           + (f"  pcr={args.pcr_prob:.2f} full={args.sims}/{args.considered} "
@@ -241,7 +288,7 @@ def main() -> None:
         gen_start = time.time()
 
         (obs, pol, z, vmask, pmask), stats = selfplay_generation(
-            net, device, args, seed=7000 + gen
+            net, device, args, seed=7000 + gen, infer=infer
         )
         buffer.append((obs, pol, z, vmask, pmask))
         losses_ = train_steps(net, opt, buffer, args, device)
