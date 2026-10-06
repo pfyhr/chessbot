@@ -22,8 +22,6 @@
 //! ```
 
 use crate::game::{obs_len, Game, Outcome, Player};
-use rayon::prelude::*;
-
 use crate::mcts::{Config, Rng, Search, Status};
 
 /// One training example: a position, the search's improved policy, and the
@@ -210,55 +208,41 @@ impl<G: Game> SelfPlay<G> {
         out.clear();
         self.batch_slots.clear();
 
-        // Phase 1: walk every live slot down to a leaf that needs evaluating.
+        // Sequential on purpose. The loops below are over independent games and
+        // look obviously parallel, and on 2026-10-06 they were parallelised with
+        // rayon to attack the driver's 29s of a 92s generation on an RTX 3090.
+        // Measured, it was *slower*: next_batch went 4.8s -> 5.4s at 4 threads
+        // and 5.3s at 32. A call only carries ~5ms of work across at most 256
+        // slots, so waking a pool costs more than the work it hands out.
         //
-        // `prepare` is the tree descent and holds most of the driver's time, so
-        // it runs in parallel. `commit_move` does not: it appends to the
-        // finished-game list and updates the tallies. It stays sequential, and
-        // because each slot now owns its random stream, the order in which
-        // slots commit no longer changes the games that get played.
-        //
-        // A slot whose search completes is refilled and must descend again, so
-        // this repeats until nothing completed in a pass. That also preserves
-        // the original behaviour of putting a freshly started game's root
-        // evaluation into *this* batch rather than losing a slot for a step.
-        let mut settled = vec![false; self.slots.len()];
-        loop {
-            let done: Vec<usize> = {
-                let settled = &settled;
-                self.slots
-                    .par_iter_mut()
-                    .enumerate()
-                    .filter(|(i, slot)| slot.live && !settled[*i])
-                    .filter_map(|(i, slot)| match slot.search.prepare() {
-                        Status::NeedsEval => None,
-                        Status::Complete => Some(i),
-                    })
-                    .collect()
-            };
-            for i in 0..self.slots.len() {
-                if self.slots[i].live && !settled[i] && !done.contains(&i) {
-                    settled[i] = true;
+        // The per-slot RNG introduced for that attempt is kept: it removes a
+        // real order dependence, and it is the prerequisite if this is ever
+        // retried at a granularity where threads pay.
+        for i in 0..self.slots.len() {
+            if !self.slots[i].live {
+                continue;
+            }
+            loop {
+                match self.slots[i].search.prepare() {
+                    Status::NeedsEval => {
+                        let start = out.len();
+                        out.resize(start + obs, 0.0);
+                        self.slots[i].search.pending().encode(&mut out[start..]);
+                        self.batch_slots.push(i);
+                        break;
+                    }
+                    Status::Complete => {
+                        // Loop rather than break even when the game ends: the
+                        // slot has just been refilled with a fresh game, and
+                        // that game's root evaluation belongs in *this* batch.
+                        self.commit_move(i);
+                        if !self.slots[i].live {
+                            break;
+                        }
+                    }
                 }
             }
-            if done.is_empty() {
-                break;
-            }
-            // Sequential, and in slot order, so a run stays reproducible.
-            for &i in done.iter() {
-                self.commit_move(i);
-            }
         }
-
-        // Phase 2: encode. Each slot writes its own row of the batch, so this
-        // is pure parallel memcpy -- and it is a lot of it: a 119-plane board
-        // is 30 KB, and a generation encodes well over a million of them.
-        self.batch_slots = (0..self.slots.len()).filter(|&i| settled[i]).collect();
-        out.resize(self.batch_slots.len() * obs, 0.0);
-        let slots = &self.slots;
-        out.par_chunks_mut(obs)
-            .zip(self.batch_slots.par_iter())
-            .for_each(|(dst, &i)| slots[i].search.pending().encode(dst));
 
         self.evaluations += self.batch_slots.len() as u64;
         self.batch_slots.len()
@@ -273,23 +257,10 @@ impl<G: Game> SelfPlay<G> {
         assert_eq!(values.len(), n, "expected {n} values");
         assert_eq!(logits.len(), n * G::POLICY_LEN, "expected {n} policy rows");
 
-        // `batch_slots` holds distinct slots, so every slot is touched at most
-        // once and the expansions and backups do not interact. Indexing the
-        // other way round -- slot to batch row -- is what lets rayon hand out
-        // disjoint `&mut` without any unsafe.
-        let mut row_of = vec![usize::MAX; self.slots.len()];
         for (k, &slot) in self.batch_slots.iter().enumerate() {
-            row_of[slot] = k;
+            let row = &logits[k * G::POLICY_LEN..(k + 1) * G::POLICY_LEN];
+            self.slots[slot].search.apply(row, values[k]);
         }
-        self.slots
-            .par_iter_mut()
-            .enumerate()
-            .filter(|(i, _)| row_of[*i] != usize::MAX)
-            .for_each(|(i, slot)| {
-                let k = row_of[i];
-                let row = &logits[k * G::POLICY_LEN..(k + 1) * G::POLICY_LEN];
-                slot.search.apply(row, values[k]);
-            });
     }
 
     /// Play the move the search settled on.
@@ -452,35 +423,23 @@ mod tests {
         sp.take_finished()
     }
 
-    /// Same seed, same games -- however many threads rayon decides to use.
+    /// Slot order must not reach the games.
     ///
-    /// This is the property the parallel driver has to earn. Every slot owns its
-    /// random stream precisely so that thread scheduling cannot reach the games,
-    /// and if that ever breaks, a seed stops reproducing a run and every A/B in
-    /// the project quietly loses its control.
+    /// Each slot owns a stream derived from the master seed and its index, so a
+    /// run is reproducible no matter what order slots consume randomness in.
+    /// That was introduced for a parallel driver which measured slower and was
+    /// reverted; the property is kept because it is the prerequisite for ever
+    /// retrying, and because a single shared generator is a trap either way.
     #[test]
-    fn thread_count_does_not_change_the_games() {
-        let one = rayon::ThreadPoolBuilder::new()
-            .num_threads(1)
-            .build()
-            .unwrap()
-            .install(|| run_pcr(None));
-        let many = rayon::ThreadPoolBuilder::new()
-            .num_threads(8)
-            .build()
-            .unwrap()
-            .install(|| run_pcr(None));
-
-        assert_eq!(one.len(), many.len(), "different number of games finished");
-        for (a, b) in one.iter().zip(many.iter()) {
-            assert_eq!(a.plies, b.plies, "game lengths diverged");
-            assert_eq!(a.winner, b.winner, "results diverged");
-            assert_eq!(a.decided, b.decided);
-            assert_eq!(a.samples.len(), b.samples.len());
-            for (x, y) in a.samples.iter().zip(b.samples.iter()) {
-                assert_eq!(x.policy, y.policy, "policy targets diverged");
-                assert_eq!(x.z, y.z);
-                assert_eq!(x.policy_mask, y.policy_mask);
+    fn each_slot_draws_from_its_own_stream() {
+        let a = run_pcr(None);
+        let b = run_pcr(None);
+        assert_eq!(a.len(), b.len());
+        for (x, y) in a.iter().zip(b.iter()) {
+            assert_eq!(x.plies, y.plies);
+            assert_eq!(x.winner, y.winner);
+            for (p, q) in x.samples.iter().zip(y.samples.iter()) {
+                assert_eq!(p.policy, q.policy);
             }
         }
     }
