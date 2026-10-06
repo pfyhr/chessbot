@@ -279,6 +279,17 @@ impl<G: Game> Search<G> {
                         break;
                     }
                     self.pending = created;
+                    // Depth of the simulation that is asking for an evaluation.
+                    // A depth-1 leaf is a direct child of the root, chosen before
+                    // any result came back, so it could have shared a batch with
+                    // every other depth-1 leaf of this move. Deeper leaves were
+                    // selected using earlier results and could not.
+                    prof_count!("n_leaf_depth_sum", self.path.len() as u64);
+                    if self.path.len() <= 1 {
+                        prof_count!("n_leaf_depth1", 1);
+                    } else {
+                        prof_count!("n_leaf_deeper", 1);
+                    }
                     return Status::NeedsEval;
                 }
 
