@@ -70,3 +70,41 @@ The derivation was not sloppy; it was correct about the mechanism it modelled
 and silent about a constraint outside it. A ratio that is exactly right about
 search can still be wrong about chess. Measure it anyway — it cost one counter
 and ten minutes.
+
+---
+
+## Correction, same evening: the depth claim above was the benchmark's, not the engine's
+
+`drivercost` feeds **all-zero logits and all-zero values** (`drivercost.rs:45`),
+deliberately — its stated job is to time the driver "with the network excluded".
+Under a flat policy the interior rule `argmax[pi'(a) - N(a)/(1+sum N)]`
+degenerates to round-robin: every child of a node is opened before any is
+re-entered. That is the shallowest the search can possibly be. Policy sharpness
+is the thing that buys depth, and this benchmark sets it to zero.
+
+Re-measured with gen695 actually driving the search (`bench/leaf_depth.py`,
+128 games, `considered = 16`), as % of leaves:
+
+| | mean | d1 | d2 | d3 | d4 | d5 | d6 | d7 | d8 | d9+ |
+|---|---|---|---|---|---|---|---|---|---|---|
+| sims 32, flat | 1.55 | 44.9 | 55.4 | 0.6 | 0.0 | | | | | |
+| **sims 32, real** | **1.89** | 44.9 | 36.8 | 10.3 | 5.1 | 1.2 | 0.7 | 0.5 | 0.3 | 0.4 |
+| sims 128, flat | 2.08 | 10.9 | 68.7 | 19.5 | 0.1 | | | | | |
+| **sims 128, real** | **3.96** | 11.5 | 26.0 | 18.3 | 13.0 | 9.6 | 6.7 | 4.5 | 3.1 | 7.2 |
+
+**"The tree is two plies deep" was wrong.** At the budget the engine actually
+plays — `sims = 128`, the UCI default — mean leaf depth is **3.96** and 7.2% of
+leaves sit at depth 9 or beyond. The flat evaluator understated it by about 2×,
+and understated the tail by two orders of magnitude.
+
+**What is unaffected: everything about batching.** The depth-1 share is
+`min(considered, legal moves)` divided by the simulation count — fixed by the
+sequential-halving schedule, which does not read the evaluator at all. The two
+measurements agree on it to within noise (44.9 vs 44.9, 11.5 vs 10.9), which is
+the prediction that said they would. The 45.1% ceiling stands.
+
+**The rule this breaks.** [[benchmark-the-loop-not-the-kernel]] says a
+microbenchmark overstates speed. This is the neighbouring failure: a benchmark
+built to exclude a component is valid only for questions that component does not
+answer. It was the right tool for `ns_prepare` and the wrong tool for depth, and
+nothing in its output said which.

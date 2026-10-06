@@ -442,14 +442,27 @@ def commands(engine: "Engine"):
         yield line.strip()
 
 
+def default_device() -> str:
+    """The best device present.
+
+    CUDA has to be tested first: the laptop-shaped version of this checked only
+    MPS and so fell through to CPU on a three-GPU box, silently, with nothing in
+    the UCI handshake to say so beyond `option name Device ... default cpu`.
+    """
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="UCI engine over the trained network.")
     ap.add_argument("--run", type=Path, default=None,
                     help="run directory; defaults to the most recently trained one")
     ap.add_argument("--blocks", type=int, default=6)
     ap.add_argument("--channels", type=int, default=96)
-    ap.add_argument("--device",
-                    default="mps" if torch.backends.mps.is_available() else "cpu")
+    ap.add_argument("--device", default=default_device())
     args = ap.parse_args()
 
     from .serve import newest_run

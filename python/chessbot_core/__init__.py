@@ -28,6 +28,10 @@ from ._core import (
     connect4_encode_batch,
     CONNECT4_POLICY_LEN,
     CONNECT4_OBS_SHAPE,
+    # TEMPORARY (2026-10-06): hot-path counters. Both return empty/no-op
+    # unless the core was built with the `hotprof` feature.
+    hot_profile,
+    hot_profile_clear,
 )
 
 __all__ = [
@@ -46,4 +50,6 @@ __all__ = [
     "connect4_encode_batch",
     "CONNECT4_POLICY_LEN",
     "CONNECT4_OBS_SHAPE",
+    "hot_profile",
+    "hot_profile_clear",
 ]

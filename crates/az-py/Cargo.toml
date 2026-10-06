@@ -25,3 +25,6 @@ ndarray = "0.17"
 # harness builds a standalone binary whose Python symbols resolve to nothing and
 # it aborts at startup.
 extension-module = ["pyo3/extension-module"]
+# TEMPORARY (2026-10-06): pass the hot-path counters through to az-core so a
+# measurement run driven from Python can read them. Off by default.
+hotprof = ["az-core/hotprof"]
