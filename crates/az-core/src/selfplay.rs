@@ -23,6 +23,7 @@
 
 use crate::game::{obs_len, Game, Outcome, Player};
 use crate::mcts::{Config, Rng, Search, Status};
+use crate::{prof_count, prof_time};
 
 /// One training example: a position, the search's improved policy, and the
 /// eventual game result from that position's mover's point of view.
@@ -201,11 +202,22 @@ impl<G: Game> SelfPlay<G> {
 
     /// Step every live game to its next leaf and encode them all.
     ///
-    /// Returns the batch size; zero means every game has finished. `out` is
-    /// filled with `n * obs_len` floats in row-major `(N, C, H, W)` order.
+    /// Returns the batch size `n`; zero means every game has finished. The
+    /// first `n * obs_len` floats of `out` are the batch, row-major
+    /// `(N, C, H, W)`; anything past that is stale and must be ignored.
+    ///
+    /// `out` is grown to the full slot count and then left alone. Clearing and
+    /// re-`resize`ing it each call zero-filled every observation twice, once
+    /// here and once in `encode`, which is 30 KB of pointless memset per
+    /// evaluation.
     pub fn next_batch(&mut self, out: &mut Vec<f32>) -> usize {
+        let __nb = std::time::Instant::now();
+        prof_count!("n_next_batch", 1);
         let obs = obs_len::<G>();
-        out.clear();
+        let needed = self.slots.len() * obs;
+        if out.len() < needed {
+            out.resize(needed, 0.0);
+        }
         self.batch_slots.clear();
 
         // Sequential on purpose. The loops below are over independent games and
@@ -223,11 +235,28 @@ impl<G: Game> SelfPlay<G> {
                 continue;
             }
             loop {
-                match self.slots[i].search.prepare() {
+                prof_count!("n_prepare", 1);
+                let __a0 = crate::prof::read("n_alloc_calls");
+                let __b0 = crate::prof::read("n_alloc_bytes");
+                let __st = prof_time!("ns_prepare", self.slots[i].search.prepare());
+                prof_count!(
+                    "n_alloc_calls_descent",
+                    crate::prof::read("n_alloc_calls") - __a0
+                );
+                prof_count!(
+                    "n_alloc_bytes_descent",
+                    crate::prof::read("n_alloc_bytes") - __b0
+                );
+                match __st {
                     Status::NeedsEval => {
-                        let start = out.len();
-                        out.resize(start + obs, 0.0);
-                        self.slots[i].search.pending().encode(&mut out[start..]);
+                        let start = self.batch_slots.len() * obs;
+                        prof_time!(
+                            "ns_encode",
+                            self.slots[i]
+                                .search
+                                .pending()
+                                .encode(&mut out[start..start + obs])
+                        );
                         self.batch_slots.push(i);
                         break;
                     }
@@ -235,7 +264,8 @@ impl<G: Game> SelfPlay<G> {
                         // Loop rather than break even when the game ends: the
                         // slot has just been refilled with a fresh game, and
                         // that game's root evaluation belongs in *this* batch.
-                        self.commit_move(i);
+                        prof_count!("n_commit", 1);
+                        prof_time!("ns_commit", self.commit_move(i));
                         if !self.slots[i].live {
                             break;
                         }
@@ -245,6 +275,8 @@ impl<G: Game> SelfPlay<G> {
         }
 
         self.evaluations += self.batch_slots.len() as u64;
+        prof_count!("n_evals", self.batch_slots.len());
+        prof_count!("ns_next_batch", __nb.elapsed().as_nanos());
         self.batch_slots.len()
     }
 
@@ -253,14 +285,16 @@ impl<G: Game> SelfPlay<G> {
     /// `logits` is `n * POLICY_LEN`, `values` is `n`, both in the order
     /// [`SelfPlay::next_batch`] produced.
     pub fn submit(&mut self, logits: &[f32], values: &[f32]) {
+        let __sb = std::time::Instant::now();
         let n = self.batch_slots.len();
         assert_eq!(values.len(), n, "expected {n} values");
         assert_eq!(logits.len(), n * G::POLICY_LEN, "expected {n} policy rows");
 
         for (k, &slot) in self.batch_slots.iter().enumerate() {
             let row = &logits[k * G::POLICY_LEN..(k + 1) * G::POLICY_LEN];
-            self.slots[slot].search.apply(row, values[k]);
+            prof_time!("ns_apply", self.slots[slot].search.apply(row, values[k]));
         }
+        prof_count!("ns_submit", __sb.elapsed().as_nanos());
     }
 
     /// Play the move the search settled on.
@@ -268,8 +302,8 @@ impl<G: Game> SelfPlay<G> {
     /// If that ends the game, the slot is either refilled with a fresh game or
     /// marked dead; callers check `slots[i].live` rather than a return value.
     fn commit_move(&mut self, i: usize) {
-        let (mv, target) = self.slots[i].search.result();
-        let root_value = self.slots[i].search.root_value();
+        let (mv, target) = prof_time!("ns_result", self.slots[i].search.result());
+        let root_value = prof_time!("ns_root_value", self.slots[i].search.root_value());
 
         let policy: Vec<(u32, f32)> = target
             .iter()
@@ -305,7 +339,11 @@ impl<G: Game> SelfPlay<G> {
         let slot = &mut self.slots[i];
         let full = Self::roll(&mut slot.rng, pcr);
         slot.full = full;
-        slot.search = Search::new(next, Self::budget(base, pcr, full), &mut slot.rng);
+        prof_count!("n_search_new", 1);
+        slot.search = prof_time!(
+            "ns_search_new",
+            Search::new(next, Self::budget(base, pcr, full), &mut slot.rng)
+        );
     }
 
     fn finish_game(&mut self, i: usize, outcome: Option<Outcome>) {
@@ -355,7 +393,11 @@ impl<G: Game> SelfPlay<G> {
             let slot = &mut self.slots[i];
             let full = Self::roll(&mut slot.rng, pcr);
             slot.full = full;
-            slot.search = Search::new(G::initial(), Self::budget(base, pcr, full), &mut slot.rng);
+            prof_count!("n_search_new", 1);
+            slot.search = prof_time!(
+                "ns_search_new",
+                Search::new(G::initial(), Self::budget(base, pcr, full), &mut slot.rng)
+            );
             self.slots[i].samples.clear();
         } else {
             self.slots[i].live = false;

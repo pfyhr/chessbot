@@ -7,3 +7,8 @@ description = "Game abstraction, encodings, Gumbel MCTS and self-play driver"
 
 [dependencies]
 shakmaty = "0.30"
+
+[features]
+# TEMPORARY (2026-10-06) hot-path timers; see src/prof.rs. Off by default and
+# zero-cost when off -- every prof_* macro expands to the bare expression.
+hotprof = []

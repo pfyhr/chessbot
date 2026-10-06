@@ -35,6 +35,7 @@
 //! ```
 
 use crate::game::{Game, Outcome};
+use crate::{prof_count, prof_time};
 
 /// Not created yet.
 const NO_CHILD: u32 = u32::MAX;
@@ -125,6 +126,13 @@ struct Node<G: Game> {
     /// The network's value estimate here, from this node's mover perspective.
     value: f32,
     edges: Vec<Edge<G>>,
+    /// Legal moves, generated when the node was created and held until the
+    /// network comes back and they can be turned into edges.
+    ///
+    /// Creating a node already requires a full legal-move generation, to know
+    /// whether the position is terminal. Regenerating that list in
+    /// `expand_node` doubled the movegen bill for every leaf in the tree.
+    moves: Vec<G::Move>,
     /// A result the rules guarantee for this node's mover, once enough of the
     /// subtree below it has been solved.
     proven: Option<Outcome>,
@@ -134,8 +142,14 @@ pub struct Search<G: Game> {
     cfg: Config,
     nodes: Vec<Node<G>>,
 
-    /// Gumbel perturbation per root edge, drawn once.
-    gumbel: Vec<f32>,
+    /// Seed for this search's root Gumbel perturbation.
+    ///
+    /// The perturbation is a pure function of this seed and the policy index,
+    /// so it is fixed for the whole search without being materialised. The
+    /// dense version drew `POLICY_LEN` (4672 in chess) samples per move while
+    /// only the ~35 legal root moves are ever read -- two logarithms each, and
+    /// it was the single largest item in the self-play driver.
+    gumbel_seed: u64,
     /// Root edges still in contention this phase.
     contenders: Vec<usize>,
     phases: u32,
@@ -149,15 +163,12 @@ pub struct Search<G: Game> {
     pending: u32,
     finished: bool,
 
-    scratch: Vec<G::Move>,
 }
 
 impl<G: Game> Search<G> {
     pub fn new(root: G, cfg: Config, rng: &mut Rng) -> Self {
-        let terminal_root = {
-            let mut buf = Vec::new();
-            root.expand(&mut buf)
-        };
+        let mut root_moves = Vec::new();
+        let terminal_root = root.expand(&mut root_moves);
         let mut s = Self {
             cfg,
             nodes: vec![Node {
@@ -167,9 +178,10 @@ impl<G: Game> Search<G> {
                 visits: 0,
                 value: 0.0,
                 edges: Vec::new(),
+                moves: root_moves,
                 proven: terminal_root,
             }],
-            gumbel: Vec::new(),
+            gumbel_seed: 0,
             contenders: Vec::new(),
             phases: 1,
             visits_each: 1,
@@ -179,7 +191,6 @@ impl<G: Game> Search<G> {
             path: Vec::new(),
             pending: 0,
             finished: false,
-            scratch: Vec::new(),
         };
         s.seed_gumbel(rng);
         s
@@ -188,9 +199,30 @@ impl<G: Game> Search<G> {
     /// Gumbel noise is drawn up front so the ordering is fixed for the whole
     /// search -- resampling per phase would break the top-k sampling argument.
     fn seed_gumbel(&mut self, rng: &mut Rng) {
-        // Sized once the root is expanded; store draws now so the search is
-        // reproducible regardless of when expansion happens.
-        self.gumbel = (0..G::POLICY_LEN).map(|_| rng.gumbel()).collect();
+        prof_time!("ns_seed_gumbel", {
+            self.gumbel_seed = rng.next_u64();
+        });
+    }
+
+    /// The Gumbel perturbation for one policy index.
+    ///
+    /// A counter-based hash rather than a stored table: the draws must be
+    /// i.i.d. and fixed for the search, which this gives without touching the
+    /// 4671 indices no legal move maps to.
+    #[inline]
+    fn gumbel_at(&self, index: usize) -> f32 {
+        prof_count!("n_gumbel_draws", 1);
+        // splitmix64 over (seed, index).
+        let mut z = self
+            .gumbel_seed
+            .wrapping_add((index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^= z >> 31;
+        // Same uniform construction as `Rng::next_f32`, so the distribution is
+        // identical to the draws this replaces.
+        let u = ((z >> 40) as f32 + 0.5) / (1u32 << 24) as f32;
+        -(-u.ln()).ln()
     }
 
     /// The position awaiting evaluation.
@@ -238,7 +270,8 @@ impl<G: Game> Search<G> {
                 let child = self.nodes[node as usize].edges[edge].child;
 
                 if child == NO_CHILD {
-                    let created = self.create_child(node, edge);
+                    prof_count!("n_create_child", 1);
+                    let created = prof_time!("ns_create_child", self.create_child(node, edge));
                     if let Some(o) = self.nodes[created as usize].terminal {
                         // Terminal leaves carry their own exact value; no
                         // network call needed.
@@ -267,7 +300,8 @@ impl<G: Game> Search<G> {
                 }
 
                 node = child;
-                edge = self.select_interior(node);
+                prof_count!("n_select_interior", 1);
+                edge = prof_time!("ns_select_interior", self.select_interior(node));
             }
         }
     }
@@ -279,7 +313,7 @@ impl<G: Game> Search<G> {
     pub fn apply(&mut self, logits: &[f32], value: f32) {
         debug_assert_eq!(logits.len(), G::POLICY_LEN);
         let idx = self.pending;
-        self.expand_node(idx, logits, value);
+        prof_time!("ns_expand_node", self.expand_node(idx, logits, value));
 
         if idx == 0 {
             self.start_root_phases();
@@ -288,7 +322,7 @@ impl<G: Game> Search<G> {
             self.nodes[0].visits = 1;
             return;
         }
-        self.backup(idx, value);
+        prof_time!("ns_backup", self.backup(idx, value));
     }
 
     fn expand_node(&mut self, idx: u32, logits: &[f32], value: f32) {
@@ -300,14 +334,18 @@ impl<G: Game> Search<G> {
             return;
         }
 
-        node.pos.expand(&mut self.scratch);
-        let pos = node.pos.clone();
-        let edges = self
-            .scratch
+        // The move list was generated when this node was created; only a node
+        // that somehow has none regenerates it.
+        let mut moves = std::mem::take(&mut self.nodes[idx as usize].moves);
+        if moves.is_empty() {
+            self.nodes[idx as usize].pos.expand(&mut moves);
+        }
+        let node = &self.nodes[idx as usize];
+        let edges: Vec<Edge<G>> = moves
             .iter()
             .map(|&mv| Edge {
                 mv,
-                logit: logits[pos.policy_index(mv)],
+                logit: logits[node.pos.policy_index(mv)],
                 child: NO_CHILD,
                 visits: 0,
                 value_sum: 0.0,
@@ -320,10 +358,8 @@ impl<G: Game> Search<G> {
     fn create_child(&mut self, node: u32, edge: usize) -> u32 {
         let mut pos = self.nodes[node as usize].pos.clone();
         pos.play(self.nodes[node as usize].edges[edge].mv);
-        let terminal = {
-            let mut buf = Vec::new();
-            pos.expand(&mut buf)
-        };
+        let mut moves = Vec::new();
+        let terminal = pos.expand(&mut moves);
         let id = self.nodes.len() as u32;
         self.nodes.push(Node {
             pos,
@@ -332,6 +368,7 @@ impl<G: Game> Search<G> {
             visits: 0,
             value: terminal.map_or(0.0, |o| o.value()),
             edges: Vec::new(),
+            moves,
             proven: terminal,
         });
         self.nodes[node as usize].edges[edge].child = id;
@@ -421,10 +458,13 @@ impl<G: Game> Search<G> {
 
         // Gumbel-top-k: sampling m actions without replacement from softmax(logits)
         // is exactly taking the top m of `logit + gumbel`.
+        // Keyed up front, not recomputed inside the comparator: the comparator
+        // runs O(n log n) times and each call costs two logarithms.
+        let keys: Vec<f32> = (0..n_legal).map(|i| self.root_gumbel_score(i)).collect();
         let mut ranked: Vec<usize> = (0..n_legal).collect();
         ranked.sort_by(|&a, &b| {
-            self.root_gumbel_score(b)
-                .partial_cmp(&self.root_gumbel_score(a))
+            keys[b]
+                .partial_cmp(&keys[a])
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         ranked.truncate(m);
@@ -438,7 +478,7 @@ impl<G: Game> Search<G> {
     #[inline]
     fn root_gumbel_score(&self, edge: usize) -> f32 {
         let e = &self.nodes[0].edges[edge];
-        self.gumbel[self.nodes[0].pos.policy_index(e.mv)] + e.logit
+        self.gumbel_at(self.nodes[0].pos.policy_index(e.mv)) + e.logit
     }
 
     /// `g(a) + logit(a) + sigma(q(a))` for every root edge, the ranking used for
@@ -511,7 +551,8 @@ impl<G: Game> Search<G> {
     /// already received -- a deterministic rule, with no exploration constant to
     /// tune.
     fn select_interior(&mut self, node: u32) -> usize {
-        let improved = self.improved_policy(node);
+        prof_count!("n_improved_policy", 1);
+        let improved = prof_time!("ns_improved_policy", self.improved_policy(node));
         let n = &self.nodes[node as usize];
         let total: u32 = n.edges.iter().map(|e| e.visits).sum();
         let denom = 1.0 + total as f32;
@@ -616,7 +657,7 @@ impl<G: Game> Search<G> {
             return out;
         }
 
-        let sigma = self.sigma_completed(node);
+        let sigma = prof_time!("ns_sigma_completed", self.sigma_completed(node));
         let mut scored: Vec<f32> = n
             .edges
             .iter()

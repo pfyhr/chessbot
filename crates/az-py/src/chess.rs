@@ -309,7 +309,7 @@ impl PyChessSelfPlay {
         if n == 0 {
             return Ok(None);
         }
-        Array4::from_shape_vec((n, 119, 8, 8), self.obs.clone())
+        Array4::from_shape_vec((n, 119, 8, 8), self.obs[..n * obs_len::<ChessPos>()].to_vec())
             .map(|a| Some(a.into_pyarray(py)))
             .map_err(|e| PyValueError::new_err(e.to_string()))
     }

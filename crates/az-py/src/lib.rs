@@ -23,6 +23,31 @@ use az_core::game::Game;
 use az_core::ChessPos;
 use pyo3::prelude::*;
 
+/// TEMPORARY (2026-10-06): hot-path counters. Empty unless az-core/hotprof is on.
+#[pyfunction]
+fn hot_profile() -> Vec<(String, u64)> {
+    az_core::prof::snapshot()
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect()
+}
+
+/// TEMPORARY (2026-10-06): zero the hot-path counters.
+#[pyfunction]
+fn hot_profile_clear() {
+    az_core::prof::clear();
+}
+
+/// TEMPORARY (2026-10-06): proves which build is loaded.
+#[pyfunction]
+fn hot_sentinel() -> String {
+    format!(
+        "{} built {}",
+        az_core::prof::SENTINEL,
+        option_env!("HOTPROF_STAMP").unwrap_or("unstamped")
+    )
+}
+
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<chess::PyPosition>()?;
@@ -30,6 +55,9 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<chess::PyChessSearch>()?;
     m.add_function(wrap_pyfunction!(chess::encode_batch, m)?)?;
     m.add_function(wrap_pyfunction!(chess::legal_mask_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(hot_profile, m)?)?;
+    m.add_function(wrap_pyfunction!(hot_profile_clear, m)?)?;
+    m.add_function(wrap_pyfunction!(hot_sentinel, m)?)?;
 
     m.add("POLICY_LEN", ChessPos::POLICY_LEN)?;
     m.add("OBS_SHAPE", ChessPos::OBS_SHAPE)?;

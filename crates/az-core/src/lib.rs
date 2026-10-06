@@ -10,6 +10,7 @@ pub mod chess;
 pub mod connect4;
 pub mod game;
 pub mod mcts;
+pub mod prof;
 pub mod selfplay;
 
 pub use chess::ChessPos;

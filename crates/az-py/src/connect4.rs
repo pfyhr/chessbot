@@ -196,7 +196,10 @@ impl PyConnect4SelfPlay {
         if n == 0 {
             return Ok(None);
         }
-        Array4::from_shape_vec((n, 2, HEIGHT, WIDTH), self.obs.clone())
+        Array4::from_shape_vec(
+            (n, 2, HEIGHT, WIDTH),
+            self.obs[..n * obs_len::<Connect4>()].to_vec(),
+        )
             .map(|a| Some(a.into_pyarray(py)))
             .map_err(|e| PyValueError::new_err(e.to_string()))
     }

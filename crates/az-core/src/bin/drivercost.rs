@@ -15,11 +15,17 @@ use az_core::mcts::Config;
 use az_core::selfplay::SelfPlay;
 use std::time::Instant;
 
+#[cfg(feature = "hotprof")]
+#[global_allocator]
+static ALLOC: az_core::prof::CountingAlloc = az_core::prof::CountingAlloc;
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let sims: u32 = flag(&args, "--sims").unwrap_or(32);
     let concurrency: usize = flag(&args, "--concurrency").unwrap_or(512);
     let games: usize = flag(&args, "--games").unwrap_or(512);
+    let considered: usize = flag(&args, "--considered").unwrap_or(16);
+    let plies: usize = flag(&args, "--plies").unwrap_or(300);
 
     println!(
         "Self-play driver ceiling, single-threaded, network excluded\n\
@@ -28,10 +34,10 @@ fn main() {
 
     let cfg = Config {
         sims,
-        max_considered: 16,
+        max_considered: considered,
         ..Config::default()
     };
-    let mut sp = SelfPlay::<ChessPos>::new(concurrency, games, cfg, 300, 0xC0FFEE);
+    let mut sp = SelfPlay::<ChessPos>::new(concurrency, games, cfg, plies, 0xC0FFEE);
 
     let obs = obs_len::<ChessPos>();
     let mut buf = Vec::with_capacity(concurrency * obs);
@@ -39,6 +45,7 @@ fn main() {
     let logits = vec![0.0f32; concurrency * ChessPos::POLICY_LEN];
     let values = vec![0.0f32; concurrency];
 
+    az_core::prof::clear();
     let start = Instant::now();
     let mut evals: u64 = 0;
     let mut batches: u64 = 0;
@@ -85,6 +92,37 @@ fn main() {
         "  encoding alone moves {:.1} MB/s of planes",
         (evals as f64 * obs as f64 * 4.0) / secs / 1e6
     );
+    report_prof(secs, evals);
+}
+
+fn report_prof(secs: f64, evals: u64) {
+    let snap = az_core::prof::snapshot();
+    if snap.is_empty() {
+        println!("\n(no hot-path profile: build with --features az-core/hotprof)");
+        return;
+    }
+    println!("\n--- hot-path profile [{}] ---", az_core::prof::SENTINEL);
+    println!("{:<26} {:>12} {:>9} {:>11}", "counter", "value", "% of run", "ns/eval");
+    for (name, v) in snap {
+        if name.starts_with("ns_") {
+            let s = v as f64 / 1e9;
+            println!(
+                "{:<26} {:>11.3}s {:>8.1}% {:>11.0}",
+                name,
+                s,
+                100.0 * s / secs,
+                v as f64 / evals as f64
+            );
+        } else {
+            println!(
+                "{:<26} {:>12} {:>9} {:>11.1}",
+                name,
+                v,
+                "",
+                v as f64 / evals as f64
+            );
+        }
+    }
 }
 
 fn flag<T: std::str::FromStr>(args: &[String], name: &str) -> Option<T> {
