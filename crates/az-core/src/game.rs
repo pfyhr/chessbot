@@ -54,9 +54,13 @@ impl Outcome {
 ///
 /// Implementors must be cheap to clone: MCTS clones positions constantly, and in
 /// chess this is the single hottest allocation in the engine.
-pub trait Game: Clone + Send + 'static {
+pub trait Game: Clone + Send + Sync + 'static {
     /// A move. Small and `Copy` -- these live in move lists on the stack.
-    type Move: Copy + Eq + std::fmt::Debug + Send;
+    ///
+    /// `Sync` on both the position and the move is what lets the self-play
+    /// driver walk every slot's tree in parallel. Positions are plain data with
+    /// no interior mutability, so this costs nothing; it just says so out loud.
+    type Move: Copy + Eq + std::fmt::Debug + Send + Sync;
 
     /// Size of the flat policy vector. Every move maps to a distinct index below
     /// this bound. For chess this is 4672 (73 move-type planes x 64 squares).

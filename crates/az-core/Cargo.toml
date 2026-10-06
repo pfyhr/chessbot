@@ -7,3 +7,4 @@ description = "Game abstraction, encodings, Gumbel MCTS and self-play driver"
 
 [dependencies]
 shakmaty = "0.30"
+rayon = "1.10"

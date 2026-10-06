@@ -22,6 +22,8 @@
 //! ```
 
 use crate::game::{obs_len, Game, Outcome, Player};
+use rayon::prelude::*;
+
 use crate::mcts::{Config, Rng, Search, Status};
 
 /// One training example: a position, the search's improved policy, and the
@@ -85,6 +87,15 @@ struct Slot<G: Game> {
     live: bool,
     /// Whether the search currently in flight was given the full budget.
     full: bool,
+    /// This slot's own random stream, derived from the master seed and the slot
+    /// index.
+    ///
+    /// A single shared generator would make the games depend on the *order* in
+    /// which slots consume it, which is fine while the driver is sequential and
+    /// fatal once it is not: thread scheduling would decide the Gumbel noise and
+    /// a seed would no longer reproduce a run. Per-slot streams make slot order
+    /// irrelevant, which is what lets the loops below be parallel at all.
+    rng: Rng,
 }
 
 pub struct SelfPlay<G: Game> {
@@ -94,7 +105,6 @@ pub struct SelfPlay<G: Game> {
     pcr: Option<Pcr>,
     max_plies: usize,
     slots: Vec<Slot<G>>,
-    rng: Rng,
 
     /// Games still to be started beyond those already in flight.
     remaining: usize,
@@ -156,15 +166,20 @@ impl<G: Game> SelfPlay<G> {
         pcr: Option<Pcr>,
     ) -> Self {
         let concurrency = concurrency.max(1).min(total_games.max(1));
-        let mut rng = Rng::new(seed);
-        let first = Self::roll(&mut rng, pcr);
+        // Slot k draws from its own stream. The odd multiplier keeps nearby
+        // seeds from producing correlated streams on an xorshift generator.
         let slots = (0..concurrency)
-            .map(|_| Slot {
-                pos: G::initial(),
-                search: Search::new(G::initial(), Self::budget(cfg, pcr, first), &mut rng),
-                samples: Vec::new(),
-                live: true,
-                full: first,
+            .map(|k| {
+                let mut srng = Rng::new(seed ^ (k as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+                let full = Self::roll(&mut srng, pcr);
+                Slot {
+                    pos: G::initial(),
+                    search: Search::new(G::initial(), Self::budget(cfg, pcr, full), &mut srng),
+                    samples: Vec::new(),
+                    live: true,
+                    full,
+                    rng: srng,
+                }
             })
             .collect();
 
@@ -173,7 +188,6 @@ impl<G: Game> SelfPlay<G> {
             pcr,
             max_plies,
             slots,
-            rng,
             remaining: total_games.saturating_sub(concurrency),
             batch_slots: Vec::new(),
             finished: Vec::new(),
@@ -196,35 +210,55 @@ impl<G: Game> SelfPlay<G> {
         out.clear();
         self.batch_slots.clear();
 
-        for i in 0..self.slots.len() {
-            if !self.slots[i].live {
-                continue;
-            }
-            loop {
-                match self.slots[i].search.prepare() {
-                    Status::NeedsEval => {
-                        let start = out.len();
-                        out.resize(start + obs, 0.0);
-                        self.slots[i].search.pending().encode(&mut out[start..]);
-                        self.batch_slots.push(i);
-                        break;
-                    }
-                    Status::Complete => {
-                        // The move is decided; commit it and start the next
-                        // search, which will immediately want a root evaluation.
-                        //
-                        // Loop rather than break even when the game ends: the
-                        // slot has just been refilled with a fresh game, and
-                        // that game's root evaluation belongs in *this* batch.
-                        // Breaking here would cost one slot per completed game.
-                        self.commit_move(i);
-                        if !self.slots[i].live {
-                            break;
-                        }
-                    }
+        // Phase 1: walk every live slot down to a leaf that needs evaluating.
+        //
+        // `prepare` is the tree descent and holds most of the driver's time, so
+        // it runs in parallel. `commit_move` does not: it appends to the
+        // finished-game list and updates the tallies. It stays sequential, and
+        // because each slot now owns its random stream, the order in which
+        // slots commit no longer changes the games that get played.
+        //
+        // A slot whose search completes is refilled and must descend again, so
+        // this repeats until nothing completed in a pass. That also preserves
+        // the original behaviour of putting a freshly started game's root
+        // evaluation into *this* batch rather than losing a slot for a step.
+        let mut settled = vec![false; self.slots.len()];
+        loop {
+            let done: Vec<usize> = {
+                let settled = &settled;
+                self.slots
+                    .par_iter_mut()
+                    .enumerate()
+                    .filter(|(i, slot)| slot.live && !settled[*i])
+                    .filter_map(|(i, slot)| match slot.search.prepare() {
+                        Status::NeedsEval => None,
+                        Status::Complete => Some(i),
+                    })
+                    .collect()
+            };
+            for i in 0..self.slots.len() {
+                if self.slots[i].live && !settled[i] && !done.contains(&i) {
+                    settled[i] = true;
                 }
             }
+            if done.is_empty() {
+                break;
+            }
+            // Sequential, and in slot order, so a run stays reproducible.
+            for &i in done.iter() {
+                self.commit_move(i);
+            }
         }
+
+        // Phase 2: encode. Each slot writes its own row of the batch, so this
+        // is pure parallel memcpy -- and it is a lot of it: a 119-plane board
+        // is 30 KB, and a generation encodes well over a million of them.
+        self.batch_slots = (0..self.slots.len()).filter(|&i| settled[i]).collect();
+        out.resize(self.batch_slots.len() * obs, 0.0);
+        let slots = &self.slots;
+        out.par_chunks_mut(obs)
+            .zip(self.batch_slots.par_iter())
+            .for_each(|(dst, &i)| slots[i].search.pending().encode(dst));
 
         self.evaluations += self.batch_slots.len() as u64;
         self.batch_slots.len()
@@ -239,10 +273,23 @@ impl<G: Game> SelfPlay<G> {
         assert_eq!(values.len(), n, "expected {n} values");
         assert_eq!(logits.len(), n * G::POLICY_LEN, "expected {n} policy rows");
 
+        // `batch_slots` holds distinct slots, so every slot is touched at most
+        // once and the expansions and backups do not interact. Indexing the
+        // other way round -- slot to batch row -- is what lets rayon hand out
+        // disjoint `&mut` without any unsafe.
+        let mut row_of = vec![usize::MAX; self.slots.len()];
         for (k, &slot) in self.batch_slots.iter().enumerate() {
-            let row = &logits[k * G::POLICY_LEN..(k + 1) * G::POLICY_LEN];
-            self.slots[slot].search.apply(row, values[k]);
+            row_of[slot] = k;
         }
+        self.slots
+            .par_iter_mut()
+            .enumerate()
+            .filter(|(i, _)| row_of[*i] != usize::MAX)
+            .for_each(|(i, slot)| {
+                let k = row_of[i];
+                let row = &logits[k * G::POLICY_LEN..(k + 1) * G::POLICY_LEN];
+                slot.search.apply(row, values[k]);
+            });
     }
 
     /// Play the move the search settled on.
@@ -282,10 +329,12 @@ impl<G: Game> SelfPlay<G> {
         }
 
         let next = self.slots[i].pos.clone();
-        let full = Self::roll(&mut self.rng, self.pcr);
-        let cfg = Self::budget(self.cfg, self.pcr, full);
-        self.slots[i].full = full;
-        self.slots[i].search = Search::new(next, cfg, &mut self.rng);
+        let pcr = self.pcr;
+        let base = self.cfg;
+        let slot = &mut self.slots[i];
+        let full = Self::roll(&mut slot.rng, pcr);
+        slot.full = full;
+        slot.search = Search::new(next, Self::budget(base, pcr, full), &mut slot.rng);
     }
 
     fn finish_game(&mut self, i: usize, outcome: Option<Outcome>) {
@@ -330,10 +379,12 @@ impl<G: Game> SelfPlay<G> {
         if self.remaining > 0 {
             self.remaining -= 1;
             self.slots[i].pos = G::initial();
-            let full = Self::roll(&mut self.rng, self.pcr);
-            let cfg = Self::budget(self.cfg, self.pcr, full);
-            self.slots[i].full = full;
-            self.slots[i].search = Search::new(G::initial(), cfg, &mut self.rng);
+            let pcr = self.pcr;
+            let base = self.cfg;
+            let slot = &mut self.slots[i];
+            let full = Self::roll(&mut slot.rng, pcr);
+            slot.full = full;
+            slot.search = Search::new(G::initial(), Self::budget(base, pcr, full), &mut slot.rng);
             self.slots[i].samples.clear();
         } else {
             self.slots[i].live = false;
@@ -399,6 +450,39 @@ mod tests {
             assert!(guard < 200_000, "driver failed to terminate");
         }
         sp.take_finished()
+    }
+
+    /// Same seed, same games -- however many threads rayon decides to use.
+    ///
+    /// This is the property the parallel driver has to earn. Every slot owns its
+    /// random stream precisely so that thread scheduling cannot reach the games,
+    /// and if that ever breaks, a seed stops reproducing a run and every A/B in
+    /// the project quietly loses its control.
+    #[test]
+    fn thread_count_does_not_change_the_games() {
+        let one = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .unwrap()
+            .install(|| run_pcr(None));
+        let many = rayon::ThreadPoolBuilder::new()
+            .num_threads(8)
+            .build()
+            .unwrap()
+            .install(|| run_pcr(None));
+
+        assert_eq!(one.len(), many.len(), "different number of games finished");
+        for (a, b) in one.iter().zip(many.iter()) {
+            assert_eq!(a.plies, b.plies, "game lengths diverged");
+            assert_eq!(a.winner, b.winner, "results diverged");
+            assert_eq!(a.decided, b.decided);
+            assert_eq!(a.samples.len(), b.samples.len());
+            for (x, y) in a.samples.iter().zip(b.samples.iter()) {
+                assert_eq!(x.policy, y.policy, "policy targets diverged");
+                assert_eq!(x.z, y.z);
+                assert_eq!(x.policy_mask, y.policy_mask);
+            }
+        }
     }
 
     /// Without PCR every position is a policy target, exactly as before.
