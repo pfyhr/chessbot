@@ -59,9 +59,16 @@ mod imp {
         n_alloc_bytes,
         n_alloc_calls_descent,
         n_alloc_bytes_descent,
-        n_leaf_depth1,
-        n_leaf_deeper,
         n_leaf_depth_sum,
+        n_leaf_d1,
+        n_leaf_d2,
+        n_leaf_d3,
+        n_leaf_d4,
+        n_leaf_d5,
+        n_leaf_d6,
+        n_leaf_d7,
+        n_leaf_d8,
+        n_leaf_d9p,
     );
 
     #[inline]

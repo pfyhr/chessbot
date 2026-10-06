@@ -285,10 +285,16 @@ impl<G: Game> Search<G> {
                     // every other depth-1 leaf of this move. Deeper leaves were
                     // selected using earlier results and could not.
                     prof_count!("n_leaf_depth_sum", self.path.len() as u64);
-                    if self.path.len() <= 1 {
-                        prof_count!("n_leaf_depth1", 1);
-                    } else {
-                        prof_count!("n_leaf_deeper", 1);
+                    match self.path.len() {
+                        0 | 1 => prof_count!("n_leaf_d1", 1),
+                        2 => prof_count!("n_leaf_d2", 1),
+                        3 => prof_count!("n_leaf_d3", 1),
+                        4 => prof_count!("n_leaf_d4", 1),
+                        5 => prof_count!("n_leaf_d5", 1),
+                        6 => prof_count!("n_leaf_d6", 1),
+                        7 => prof_count!("n_leaf_d7", 1),
+                        8 => prof_count!("n_leaf_d8", 1),
+                        _ => prof_count!("n_leaf_d9p", 1),
                     }
                     return Status::NeedsEval;
                 }
