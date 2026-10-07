@@ -95,3 +95,16 @@ is the one this decision rests on.
 - **Self-play root width and self-play simulations are separate questions.** This
   says nothing about `sims 32` versus `sims 64`; see
   `2026-10-07-what-search-is-worth.md`.
+- **The match optimum is tied to gen695 and has to be re-measured as training
+  advances.** Search depth is a function of policy sharpness: a flat policy
+  reaches mean depth 2.08 at 128 sims / ra16 where gen695 reaches 4.14, because
+  the interior rule re-enters a known child after about `1/pi'_best` visits. A
+  sharper network therefore searches deeper at the same budget, and the balance
+  that put the peak at 8 moves with it.
+
+  Which way it drifts is **unknown**. Narrowing costs less as ranking improves,
+  but it also buys less once depth is already cheap, and those pull opposite
+  ways. Re-run the three duels when a new champion is adopted, or roughly every
+  300 generations: part 3 of `bench/depth_study.sh` took **2.4h** on one 3090 at
+  300 games per pairing, with no retraining. The self-play side does not need
+  re-checking on this schedule — it is decided by coverage, not depth.
