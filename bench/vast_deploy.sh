@@ -66,6 +66,30 @@ $SSH 'set -e
 say "smoke test: does the engine come up on the GPU?"
 $SSH 'cd ~/chessbot && printf "uci\nquit\n" | .venv/bin/chess-uci --run ~/chessbot/runs/champ 2>&1 | grep -E "^id name|Device"'
 
+say "calibration: 16 games at 512 nodes"
+# The full sweep is ~30h on the 3090 this was calibrated on. Ten minutes here
+# says whether that holds on this box, before committing the thirty hours.
+$SSH 'cd ~/chessbot && t0=$SECONDS
+  ~/fastchess/fastchess \
+    -engine cmd=$HOME/chessbot/.venv/bin/chess-uci args="--run $HOME/chessbot/runs/champ" \
+      name=a option.Generation=695 option.RootActions=8 nodes=512 \
+    -engine cmd=$HOME/chessbot/.venv/bin/chess-uci args="--run $HOME/chessbot/runs/champ" \
+      name=b option.Generation=695 option.RootActions=32 nodes=512 \
+    -rounds 8 -games 2 -concurrency 12 -srand 1 \
+    -openings file=$HOME/chessbot/bench/openings-4ply.epd format=epd order=random \
+    -log file=/dev/null >/tmp/cal.log 2>&1
+  echo "CALSECS=$((SECONDS-t0))"' | tee /tmp/cal_out.txt
+CAL=$(grep -o 'CALSECS=[0-9]*' /tmp/cal_out.txt | cut -d= -f2)
+# 621s is this duel on the reference 3090 (16 games x 512 nodes x 75.8us).
+awk -v s="$CAL" 'BEGIN{
+  r = s/621.0; t = 30.2*r;
+  printf "\n  took %ds, expected 621s on our reference 3090  ->  %.2fx\n", s, r;
+  printf "  projected full sweep: %.0fh  ($%.2f at $0.153/hr)\n", t, t*0.153;
+  if (r > 1.6)       print "  SLOW. Worth destroying this instance and taking another offer.";
+  else if (r > 1.25) print "  slower than reference but usable; the 2048 rung will drag.";
+  else               print "  nominal. Go.";
+}'
+
 say "starting the sweep in tmux"
 $SSH 'cd ~/chessbot && tmux kill-session -t sweep 2>/dev/null || true
       tmux new-session -d -s sweep "bash ~/chessbot/bench/width_budget_sweep.sh"
