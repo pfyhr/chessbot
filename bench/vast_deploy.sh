@@ -21,10 +21,16 @@ say "what we rented"
 $SSH 'nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
       echo "cores: $(nproc)   ram: $(free -g | awk "/Mem:/{print \$2}")G"
       echo "disk free: $(df -h / | awk "NR==2{print \$4}")"
-      python3 -c "import torch;print(\"torch\",torch.__version__,\"cuda\",torch.cuda.is_available())" 2>/dev/null || echo "NO TORCH"'
+      python3 -c "import sys,torch;print('python','.'.join(map(str,sys.version_info[:2])),'| torch',torch.__version__,'| cuda',torch.cuda.is_available())" 2>/dev/null || echo "NO TORCH -- wrong template?"'
 
 # The driver is single-threaded per engine process and we run 2*CONC of them,
 # so cores are the thing that silently halves throughput on a cheap offer.
+PYV=$($SSH 'python3 -c "import sys;print(sys.version_info[1])"' 2>/dev/null | tr -d '\r')
+if [ -n "$PYV" ] && [ "$PYV" -lt 11 ]; then
+  echo "WARNING: image python is 3.$PYV but pyproject.toml needs >=3.11."
+  echo "         Pick a newer PyTorch template rather than fighting this."
+fi
+
 CORES=$($SSH 'nproc' | tr -d '\r')
 if [ "$CORES" -lt 16 ]; then
   echo "WARNING: only $CORES cores. Each of the 2 x concurrency engine processes"
