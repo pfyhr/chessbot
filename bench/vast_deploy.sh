@@ -42,10 +42,16 @@ BASEPY=$($SSH 'for c in /venv/main/bin/python /opt/conda/bin/python /usr/bin/pyt
 [ "$BASEPY" = "NONE" ] && { echo "ERROR: no python with torch. Use the PyTorch (Vast) template."; exit 1; }
 $SSH "$BASEPY -c 'import sys,torch; print(\"base python %d.%d\" % sys.version_info[:2], \"| torch\", torch.__version__, \"| cuda\", torch.cuda.is_available())'"
 
-CONC=${CONC:-$(( CORES * 2 / 3 ))}
+# fastchess runs CONC games at once, but chess is turn-based: only one engine
+# per game is searching at any moment. So the CPU-bound work is CONC threads,
+# not 2*CONC -- the other half sit idle waiting for their turn. Match
+# concurrency to cores, not to half of them. (Measured: at CONC=8 on 12 cores
+# the box ran 8 active searches and sat a third idle.)
+CONC=${CONC:-$CORES}
 [ "$CONC" -lt 4 ] && CONC=4
-[ "$CONC" -gt 12 ] && CONC=12
-echo "cores: $CORES (cgroup, not nproc)  ->  concurrency $CONC, $((CONC*2)) engine processes"
+[ "$CONC" -gt 16 ] && CONC=16
+echo "cores: $CORES (cgroup, not nproc)  ->  concurrency $CONC"
+echo "  $CONC active searches, $((CONC*2)) processes ($((CONC)) idle awaiting their turn)"
 [ "$MODE" = "check" ] && { echo; echo "check only; nothing installed."; exit 0; }
 
 say "shipping source and gen695"
