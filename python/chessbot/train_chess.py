@@ -208,6 +208,10 @@ def main() -> None:
     ap.add_argument("--eval-games", type=int, default=60)
     ap.add_argument("--tactics", type=int, default=200)
     ap.add_argument("--device", default="auto")
+    ap.add_argument("--keep-every", type=int, default=1,
+                    help="only keep every Nth checkpoint (plus last.pt and the "
+                         "final generation). A checkpoint is ~126 MB, so a long "
+                         "run at the default of 1 needs tens of GB.")
     ap.add_argument("--out", default="runs/chess")
     ap.add_argument("--init", type=Path, default=None,
                     help="start from this checkpoint instead of random weights")
@@ -342,7 +346,14 @@ def main() -> None:
         )
 
         previous = copy.deepcopy(net).eval()
-        save_checkpoint(out / f"gen{gen:03d}.pt", net, opt, {"gen": gen})
+        # A checkpoint is ~126 MB. Keeping every generation of a long run has
+        # filled a disk once already (125 GB, 98% full, 4 Oct) and will not fit
+        # on a small rented box at all. Keep every Nth plus the last, and a
+        # rolling last.pt so a resume never depends on the sampling interval.
+        if gen % args.keep_every == 0 or gen == args.generations - 1:
+            save_checkpoint(out / f"gen{gen:03d}.pt", net, opt, {"gen": gen})
+        if args.keep_every > 1:
+            save_checkpoint(out / "last.pt", net, opt, {"gen": gen})
         (out / "history.json").write_text(json.dumps(history, indent=2))
 
     total = time.time() - t0
