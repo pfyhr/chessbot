@@ -252,7 +252,10 @@ def main() -> None:
           + "\n"
           f"  trunk={args.trunk}  policy_head={args.policy_head}"
           f"  bottleneck={args.policy_bottleneck}")
-    print(f"sims={args.sims}  games/gen={args.games}  max_plies={args.max_plies}")
+    # considered is worth ~+102 Elo (pw-32 over pw-16) and was never logged,
+    # so no finished run records which value produced it. Log it.
+    print(f"sims={args.sims}  considered={args.considered}  "
+          f"games/gen={args.games}  max_plies={args.max_plies}")
     print(f"window={args.window}  lr={args.lr}  "
           f"value_mask={'off' if args.no_value_mask else 'on'}"
           + (f"  budget={args.max_hours}h" if args.max_hours else "") + "\n")
