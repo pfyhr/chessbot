@@ -32,10 +32,19 @@ if [ -n "$PYV" ] && [ "$PYV" -lt 11 ]; then
 fi
 
 CORES=$($SSH 'nproc' | tr -d '\r')
-if [ "$CORES" -lt 16 ]; then
-  echo "WARNING: only $CORES cores. Each of the 2 x concurrency engine processes"
-  echo "         needs one. Consider CONC=$((CORES/2 - 1)) or a better offer."
+# Each duel runs 2*CONC engine processes, each with a single-threaded driver.
+# Our reference run was 24 processes on 32 cores with the GPU at 100%, so CPU
+# supply exceeded demand there; the per-process need is unmeasured, and the
+# calibration below is what actually settles it. Keep ~1.5 processes per core.
+CONC=${CONC:-$(( CORES * 2 / 3 ))}
+[ "$CONC" -lt 4 ] && CONC=4
+[ "$CONC" -gt 12 ] && CONC=12
+echo "cores: $CORES  ->  concurrency $CONC ($((CONC*2)) engine processes)"
+if [ "$CORES" -lt 12 ]; then
+  echo "NOTE: thin on cores. The calibration below measures the real cost;"
+  echo "      if it comes back slow, a box with more cores beats a faster card."
 fi
+export CONC
 [ "$MODE" = "check" ] && { echo "check only; nothing started"; exit 0; }
 
 say "shipping source and gen695"
@@ -81,7 +90,7 @@ $SSH 'cd ~/chessbot && t0=$SECONDS
       name=a option.Generation=695 option.RootActions=8 nodes=512 \
     -engine cmd=$HOME/chessbot/.venv/bin/chess-uci args="--run $HOME/chessbot/runs/champ" \
       name=b option.Generation=695 option.RootActions=32 nodes=512 \
-    -rounds 8 -games 2 -concurrency 12 -srand 1 \
+    -rounds 8 -games 2 -concurrency '"$CONC"' -srand 1 \
     -openings file=$HOME/chessbot/bench/openings-4ply.epd format=epd order=random \
     -log file=/dev/null >/tmp/cal.log 2>&1
   echo "CALSECS=$((SECONDS-t0))"' | tee /tmp/cal_out.txt
@@ -98,7 +107,7 @@ awk -v s="$CAL" 'BEGIN{
 
 say "starting the sweep in tmux"
 $SSH 'cd ~/chessbot && tmux kill-session -t sweep 2>/dev/null || true
-      tmux new-session -d -s sweep "bash ~/chessbot/bench/width_budget_sweep.sh"
+      tmux new-session -d -s sweep "CONC='"$CONC"' bash ~/chessbot/bench/width_budget_sweep.sh"
       sleep 3 && tmux ls'
 echo
 echo "watch it with:  ssh -p $PORT root@$HOST 'tail -f ~/chessbot/runs/width-budget/report.log'"
