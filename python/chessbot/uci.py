@@ -442,6 +442,15 @@ def commands(engine: "Engine"):
         yield line.strip()
 
 
+# A UCI engine evaluates one position at a time, so torch's intra-op pool buys
+# nothing and costs a great deal when several engines share a box. Torch sizes
+# that pool from the visible core count, not the cgroup limit: on a rented
+# 12-core slice advertising 64 cores, 18 engine processes opened 1,083 threads
+# and the search fell to 102 nps under a load average of 44. One thread each.
+torch.set_num_threads(1)
+torch.set_num_interop_threads(1)
+
+
 def default_device() -> str:
     """The best device present.
 

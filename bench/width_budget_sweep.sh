@@ -24,6 +24,8 @@ RAW=$OUT/raw.log
 CONC=${CONC:-12}
 
 export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
+# belt and braces: torch reads these at import, before set_num_threads runs
+export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 cd "$R" || exit 1
 say () { echo "$@" | tee -a "$L"; }
 

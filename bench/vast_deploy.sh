@@ -89,7 +89,7 @@ say "smoke test"
 $SSH 'cd ~/chessbot && printf "uci\nquit\n" | .venv/bin/chess-uci --run ~/chessbot/runs/champ 2>&1 | grep -E "^id name|Device"'
 
 say "calibration: 16 games at 512 nodes"
-CAL=$($SSH "cd ~/chessbot && t0=\$SECONDS
+CAL=$($SSH "cd ~/chessbot && export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 && t0=\$SECONDS
   ~/fastchess/fastchess \
     -engine cmd=\$HOME/chessbot/.venv/bin/chess-uci args=\"--run \$HOME/chessbot/runs/champ\" \
       name=a option.Generation=695 option.RootActions=8 nodes=512 \
