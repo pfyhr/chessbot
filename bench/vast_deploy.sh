@@ -94,25 +94,34 @@ $SSH "BASEPY='$BASEPY' bash /tmp/remote_setup.sh"
 say "smoke test"
 $SSH 'cd ~/chessbot && printf "uci\nquit\n" | .venv/bin/chess-uci --run ~/chessbot/runs/champ 2>&1 | grep -E "^id name|Device"'
 
-say "calibration: 16 games at 512 nodes"
+say "calibration: $((CONC*2)) games at 512 nodes (two full waves)"
 CAL=$($SSH "cd ~/chessbot && export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 && t0=\$SECONDS
   ~/fastchess/fastchess \
     -engine cmd=\$HOME/chessbot/.venv/bin/chess-uci args=\"--run \$HOME/chessbot/runs/champ\" \
       name=a option.Generation=695 option.RootActions=8 nodes=512 \
     -engine cmd=\$HOME/chessbot/.venv/bin/chess-uci args=\"--run \$HOME/chessbot/runs/champ\" \
       name=b option.Generation=695 option.RootActions=32 nodes=512 \
-    -rounds 8 -games 2 -concurrency $CONC -srand 1 \
+    -rounds $CONC -games 2 -concurrency $CONC -srand 1 \
     -openings file=\$HOME/chessbot/bench/openings-4ply.epd format=epd order=random \
     -log file=/dev/null >/tmp/cal.log 2>&1
   echo \$((SECONDS-t0))" | tr -d '\r' | tail -1)
-# 621s is this duel on the 3090 the sweep was calibrated against.
-awk -v s="$CAL" 'BEGIN{
-  r=s/621.0; t=30.2*r;
-  printf "  took %ss, expected 621s on our reference 3090  ->  %.2fx\n", s, r;
+# Project from THIS box's measured throughput rather than a ratio to a stale
+# reference. Two full waves of CONC games, so no idle slots skew it -- sizing it
+# at 16 games against concurrency 12 ran 12 then 4 and read 1.5x pessimistic.
+#
+# The sweep is 2,800 game-equivalents at 512-node cost:
+#   512:  2 duels x 200 games x 1  =  400
+#   1024: 3 duels x 200 games x 2  = 1200
+#   2048: 3 duels x 100 games x 4  = 1200
+awk -v s="$CAL" -v c="$CONC" 'BEGIN{
+  wave = s/2;                 # seconds for one full wave of c games
+  per  = wave/c;              # seconds per game-equivalent at full occupancy
+  t    = 2800*per/3600;
+  printf "  %ss for 2 waves of %d games -> %.1fs per game at full occupancy\n", s, c, per;
   printf "  projected sweep: %.0fh\n", t;
-  if (r>1.9)      print "  SLOW -- worth destroying this instance and taking another offer.";
-  else if (r>1.3) print "  slower than reference but usable; the 2048 rung will drag.";
-  else            print "  nominal. Go.";
+  if (t>80)      print "  SLOW -- worth taking another offer.";
+  else if (t>45) print "  usable; consider dropping the 2048 rung.";
+  else           print "  nominal. Go.";
 }'
 
 say "starting the sweep in tmux"
