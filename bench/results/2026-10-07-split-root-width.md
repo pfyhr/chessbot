@@ -1,4 +1,11 @@
-# One search, two jobs: `RootActions` 8 for play, 32 for self-play
+# One search, two jobs: root width for play, 32 for self-play
+
+> **Amended 2026-10-08.** The match-side conclusion below is too strong. On
+> replication `ra8` fell from +58 ±34 to +23 ±35 at 128 nodes (pooled +41 ±25),
+> and at 512 nodes it *loses* by 57 ±35. The optimum width scales with the node
+> budget, so there is no single setting to adopt and the default stays `ra32`.
+> See `2026-10-08-root-width-is-budget-dependent.md`. **The self-play half of
+> this document stands unchanged** — it rests on move coverage, not depth.
 
 Date: 2026-10-07. The root width that is best for *playing* is not the one that
 is best for *training*, and the two are measured separately below. This records
