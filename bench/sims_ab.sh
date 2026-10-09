@@ -16,8 +16,8 @@
 #     buys per hour, and the 64-sims arm pays for its search in games forgone.
 #   * considered=32 on both, stated explicitly: it is worth ~+102 Elo and was
 #     never recorded in any past run's log.
-#   * keep-every 25, because a checkpoint is ~126 MB and every generation would
-#     be 113 GB on a 16 GB box.
+#   * keep-every 50: a checkpoint is ~126 MB, every generation would be 113 GB,
+#     and even every 25th is 11.6 GB against the 16 GB this box has free.
 #
 # Probed on an RTX 5080: 60.5s and 98.8s per generation, so 24h gives roughly
 # 1,428 and 874 generations against the 575/386 the capacity A/B worked from.
@@ -29,7 +29,7 @@ mkdir -p "$OUT"
 export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
 cd "$R" || exit 1
 
-common="--considered 32 --keep-every 25 --games 256 --concurrency 256 \
+common="--considered 32 --keep-every 50 --games 256 --concurrency 256 \
         --max-plies 400 --steps 250 --batch 512 --window 8 --lr 5e-4 \
         --blocks 6 --channels 96 --generations 100000 --max-hours $HOURS"
 
