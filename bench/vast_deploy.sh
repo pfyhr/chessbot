@@ -54,6 +54,11 @@ echo "cores: $CORES (cgroup, not nproc)  ->  concurrency $CONC"
 echo "  $CONC active searches, $((CONC*2)) processes ($((CONC)) idle awaiting their turn)"
 [ "$MODE" = "check" ] && { echo; echo "check only; nothing installed."; exit 0; }
 
+# The training A/B is GPU-bound, so unlike the match sweep it wants a fast card
+# and few cores. `probe` measures the real per-generation cost of both arms
+# sharing one GPU, which is the only number that decides whether a box is worth
+# 24h. Costs about ten minutes and five cents.
+
 say "shipping source and gen695"
 $SSH 'mkdir -p ~/chessbot/runs/champ'
 rsync -az -e "ssh -p $PORT $SSHOPTS" \
@@ -93,6 +98,42 @@ $SSH "BASEPY='$BASEPY' bash /tmp/remote_setup.sh"
 
 say "smoke test"
 $SSH 'cd ~/chessbot && printf "uci\nquit\n" | .venv/bin/chess-uci --run ~/chessbot/runs/champ 2>&1 | grep -E "^id name|Device"'
+
+if [ "$MODE" = "probe" ]; then
+  say "does this card actually have kernels, or will it JIT?"
+  $SSH "$BASEPY -c '
+import torch
+cap = torch.cuda.get_device_capability()
+arch = torch.cuda.get_arch_list()
+want = \"sm_%d%d\" % cap
+print(\"device\", torch.cuda.get_device_name(0), \"| capability\", \"%d.%d\" % cap)
+print(\"built for:\", \" \".join(arch))
+print(\"native kernels for this card:\", \"YES\" if want in arch else \"NO -- will JIT from PTX, first run slow and maybe much slower overall\")
+'"
+
+  say "both A/B arms sharing the card, one generation each"
+  $SSH "cd ~/chessbot && export CUDA_VISIBLE_DEVICES=0 && \
+    ( .venv/bin/python bench/generation_profile.py --games 256 --steps 250 --sims 32 >/tmp/p32.txt 2>&1 & \
+      .venv/bin/python bench/generation_profile.py --games 256 --steps 250 --sims 64 >/tmp/p64.txt 2>&1 & \
+      wait )
+    for f in /tmp/p32.txt /tmp/p64.txt; do
+      echo \"--- \$f ---\"; grep -E 'generation total|GPU-bound|network forward|Rust driver' \$f
+    done" | tee /tmp/probe_out.txt
+
+  G32=$(grep -A4 "p32" /tmp/probe_out.txt | grep "generation total" | grep -oE "[0-9]+\.[0-9]+" | tail -1)
+  G64=$(grep -A4 "p64" /tmp/probe_out.txt | grep "generation total" | grep -oE "[0-9]+\.[0-9]+" | tail -1)
+  awk -v a="$G32" -v b="$G64" 'BEGIN{
+    if (a=="" || b=="") { print "\n  could not parse; read the output above"; exit }
+    printf "\n  per generation: sims32 %.1fs  sims64 %.1fs  (ratio %.2fx)\n", a, b, b/a;
+    printf "  in 24h: %.0f and %.0f generations\n", 86400/a, 86400/b;
+    printf "  the capacity A/B that settled its question had 575 and 386\n";
+    if (86400/b < 300) print "  THIN -- the 64-sims arm lands near the short-run regime. Prefer a faster card.";
+    else               print "  enough. Good box for the A/B.";
+  }'
+  echo
+  echo "probe only; nothing launched. Destroy this instance when done."
+  exit 0
+fi
 
 say "calibration: $((CONC*2)) games at 512 nodes (two full waves)"
 CAL=$($SSH "cd ~/chessbot && export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 && t0=\$SECONDS
