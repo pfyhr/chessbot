@@ -59,21 +59,24 @@ echo "  $CONC active searches, $((CONC*2)) processes ($((CONC)) idle awaiting th
 # sharing one GPU, which is the only number that decides whether a box is worth
 # 24h. Costs about ten minutes and five cents.
 
-say "shipping source and gen695"
+say "shipping source"
 $SSH 'mkdir -p ~/chessbot/runs/champ'
 rsync -az -e "ssh -p $PORT $SSHOPTS" \
       "$R/crates" "$R/python" "$R/bench" "$R/Cargo.toml" "$R/pyproject.toml" \
       root@"$HOST":chessbot/
-"$R/.venv/bin/python" - "$R" <<'SLIM'
-import sys, pathlib, torch
-src = pathlib.Path(sys.argv[1]) / "runs/w-long/gen695.pt"
-dst = pathlib.Path("/tmp/gen695-slim.pt")
-if not dst.exists():
-    ck = torch.load(src, map_location="cpu", weights_only=True)
-    torch.save({"net": ck["net"], "meta": ck.get("meta", {})}, dst)
-print(f"checkpoint {dst.stat().st_size/1e6:.0f}MB")
-SLIM
-rsync -az -e "ssh -p $PORT $SSHOPTS" /tmp/gen695-slim.pt root@"$HOST":chessbot/runs/champ/gen695.pt
+
+# The box fetches the champion itself from the GitHub release rather than
+# waiting on this laptop to be awake and reachable. The release carries the FULL
+# checkpoint -- optimizer state included -- so a continuation really continues.
+CHAMPION=${CHAMPION:-champion-w-long-g695}
+say "fetching $CHAMPION from the release"
+$SSH "cd ~/chessbot/runs/champ && \
+  curl -sSL -o gen695.pt \
+    https://github.com/pfyhr/chessbot/releases/download/$CHAMPION/gen695.pt && \
+  curl -sSL -o manifest.json \
+    https://github.com/pfyhr/chessbot/releases/download/$CHAMPION/manifest.json && \
+  ls -la gen695.pt | awk '{print \"  \" \$5 \" bytes\"}' && \
+  python3 -c \"import json;m=json.load(open('manifest.json'));print('  gen',m['generation'],'| optimizer state:',m['checkpoint']['has_optimizer_state'])\""
 
 say "building (rust, bridge, fastchess)"
 cat > /tmp/remote_setup.sh <<'REMOTE'
