@@ -1,0 +1,50 @@
+[
+  {
+    "gen": 0,
+    "games": 64,
+    "mean_plies": 16.359375,
+    "evaluations": 25803,
+    "policy_loss": 1.8394128262996674,
+    "value_loss": 0.3591560158878565,
+    "samples": 1047,
+    "tactics": 0.32,
+    "tactics_win": 0.38589211618257263,
+    "tactics_block": 0.22012578616352202,
+    "centre": 0.14311695098876953,
+    "vs_random": 0.7166666666666667,
+    "vs_prev": NaN,
+    "seconds": 7.332442998886108
+  },
+  {
+    "gen": 1,
+    "games": 64,
+    "mean_plies": 7.59375,
+    "evaluations": 10870,
+    "policy_loss": 1.3513184845447541,
+    "value_loss": 0.15825692731887103,
+    "samples": 1533,
+    "tactics": 0.3425,
+    "tactics_win": 0.3900414937759336,
+    "tactics_block": 0.27044025157232704,
+    "centre": 0.05230604484677315,
+    "vs_random": 0.7,
+    "vs_prev": 0.5333333333333333,
+    "seconds": 3.1595559120178223
+  },
+  {
+    "gen": 2,
+    "games": 64,
+    "mean_plies": 16.75,
+    "evaluations": 25778,
+    "policy_loss": 1.2004808068275452,
+    "value_loss": 0.38481559678912164,
+    "samples": 2605,
+    "tactics": 0.395,
+    "tactics_win": 0.48132780082987553,
+    "tactics_block": 0.2641509433962264,
+    "centre": 0.08284000307321548,
+    "vs_random": 0.7666666666666667,
+    "vs_prev": 0.5,
+    "seconds": 8.450989007949829
+  }
+]

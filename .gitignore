@@ -19,7 +19,17 @@ build/
 .pytest_cache/
 
 # Training artifacts
-runs/
+# Checkpoints are regenerable and run to hundreds of GB. The experimental record
+# is not: every run's history.json holds its loss trajectory, Elo curve, timings
+# and truncation rates -- 3.3 MB across 28 runs, and until now the only copy was
+# on one laptop. Keep those, drop the rest.
+#
+# A directory excluded with a trailing slash cannot have anything re-included
+# from it, so this has to exclude the contents in two stages instead.
+/runs/*
+!/runs/*/
+/runs/*/*
+!/runs/*/history.json
 data/
 *.safetensors
 *.onnx
