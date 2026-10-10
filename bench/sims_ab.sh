@@ -43,7 +43,43 @@ P32=$!
 .venv/bin/chess-train $common --sims 64 --out "$OUT/ab-sims64" > "$OUT/ab-sims64.log" 2>&1 &
 P64=$!
 echo "arms running: sims32 pid $P32, sims64 pid $P64" | tee -a "$OUT/sims-ab.log"
+
+# A CUDA deadlock does not kill the process. On 2026-10-09 one arm wedged in the
+# driver (state D, os_acquire_rwlock_read) and sat there 9.7h while the other ran
+# on: pgrep said 2/2 and the GPU showed 74% because the survivor was using it.
+# Liveness tells you nothing; progress does. If an arm stops advancing, abort
+# BOTH -- a wall-clock-matched comparison is already dead at that point, and
+# burning another nine hours only makes the bill worse.
+STALL_MIN=${STALL_MIN:-20}
+watchdog () {
+  local last32=-1 last64=-1 since=0
+  while kill -0 "$P32" 2>/dev/null && kill -0 "$P64" 2>/dev/null; do
+    sleep 300
+    local g32 g64
+    g32=$(grep -cE '^ +[0-9]+ +256' "$OUT/ab-sims32.log" 2>/dev/null || echo 0)
+    g64=$(grep -cE '^ +[0-9]+ +256' "$OUT/ab-sims64.log" 2>/dev/null || echo 0)
+    if [ "$g32" -eq "$last32" ] || [ "$g64" -eq "$last64" ]; then
+      since=$((since + 5))
+      if [ "$since" -ge "$STALL_MIN" ]; then
+        {
+          echo "WATCHDOG: no progress for ${since}min (sims32 $g32 gens, sims64 $g64 gens)"
+          echo "WATCHDOG: an arm has stalled -- the matched comparison is void. Aborting both."
+          echo "WATCHDOG: state: $(ps -o stat= -p $P32 2>/dev/null) / $(ps -o stat= -p $P64 2>/dev/null) (D = wedged in the driver)"
+        } | tee -a "$OUT/sims-ab.log"
+        kill -9 "$P32" "$P64" 2>/dev/null
+        return
+      fi
+    else
+      since=0
+    fi
+    last32=$g32; last64=$g64
+  done
+}
+watchdog &
+WD=$!
+
 wait $P32 $P64
+kill "$WD" 2>/dev/null
 
 echo "=== both arms finished $(date) ===" | tee -a "$OUT/sims-ab.log"
 for a in ab-sims32 ab-sims64; do
