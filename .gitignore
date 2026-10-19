@@ -30,7 +30,10 @@ build/
 !/runs/*/
 /runs/*/*
 !/runs/*/history.json
-data/
+# Anchored: an unanchored `data/` matches any directory of that name at any
+# depth, which silently swallowed bench/results/data -- the raw measurements
+# behind the write-ups. Those are small and are the evidence; keep them.
+/data/
 *.safetensors
 *.onnx
 *.npz

@@ -1,0 +1,21 @@
+=== root width against node budget, started Thu Oct  8 11:54:48 UTC 2026 ===
+gen695 both sides; only RootActions differs; concurrency 12
+already known -- 128: ra4 -29, ra8 +41(pooled), ra16 +26 | 512: ra8 -57
+
+--- 512 nodes (completing the row; ra8 already measured at -57 +/-35) ---
+  512 nodes  ra4   over ra32  ::  Elo: -115.23 +/- 43.72, nElo: -137.35 +/- 48.15  ::  Games: 200, Wins: 60, Losses: 124, Draws: 16, Points: 68.0 (34.00 %)  ::  9995s
+  512 nodes  ra16  over ra32  ::  Elo: 20.87 +/- 52.05, nElo: 19.50 +/- 48.15  ::  Games: 200, Wins: 101, Losses: 89, Draws: 10, Points: 106.0 (53.00 %)  ::  9631s
+
+--- 1024 nodes ---
+ 1024 nodes  ra4   over ra32  ::  Elo: -153.44 +/- 52.65, nElo: -161.15 +/- 48.15  ::  Games: 200, Wins: 54, Losses: 137, Draws: 9, Points: 58.5 (29.25 %)  ::  19277s
+ 1024 nodes  ra8   over ra32  ::  Elo: -52.51 +/- 50.98, nElo: -50.74 +/- 48.15  ::  Games: 200, Wins: 83, Losses: 113, Draws: 4, Points: 85.0 (42.50 %)  ::  18568s
+ 1024 nodes  ra16  over ra32  ::  Elo: -50.74 +/- 47.30, nElo: -52.73 +/- 48.15  ::  Games: 200, Wins: 80, Losses: 109, Draws: 11, Points: 85.5 (42.75 %)  ::  17973s
+
+--- 2048 nodes (half the games; this rung is the expensive one) ---
+ 2048 nodes  ra4   over ra32  ::  Elo: -151.35 +/- 71.62, nElo: -166.29 +/- 68.10  ::  Games: 100, Wins: 28, Losses: 69, Draws: 3, Points: 29.5 (29.50 %)  ::  19297s
+ 2048 nodes  ra8   over ra32  ::  Elo: -31.35 +/- 63.40, nElo: -34.24 +/- 68.10  ::  Games: 100, Wins: 43, Losses: 52, Draws: 5, Points: 45.5 (45.50 %)  ::  20555s
+ 2048 nodes  ra16  over ra32  ::  Elo: -56.07 +/- 66.76, nElo: -58.96 +/- 68.10  ::  Games: 100, Wins: 39, Losses: 55, Draws: 6, Points: 42.0 (42.00 %)  ::  17472s
+
+timeouts: 0
+0
+=== COMPLETE Sat Oct 10 00:47:36 UTC 2026 ===
