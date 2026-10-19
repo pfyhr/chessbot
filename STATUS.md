@@ -1,8 +1,59 @@
 # Status
 
-_Last updated 2026-09-25. **Nothing is running; the machine is idle.**
+_Last updated 2026-10-19. **Nothing is running locally; a 12h two-GPU rental is
+the next thing to book.**_
 
-Two results landed today.
+## 2026-10-19 — search depth at the top of the budget, and the sims A/B settled
+
+**Leaf depth measured at 1024 and 2048 simulations**, the two budgets the
+10 Oct width sweep reasoned about without ever measuring: **8.95 and 11.63
+plies** at `ra32` (plies, not moves — about 4.5 and 5.8 moves each side).
+
+The published explanation holds. Narrowing the root buys depth, and depth only
+pays while it is scarce; at 1024 nodes `ra32` on its own already puts 42% of its
+leaves at depth 9 or beyond, so narrowing there buys something the search has.
+`ra32` stays the default. The two blank cells in the sweep table are now real
+numbers.
+
+What the measurement *broke* is the rate, which matters more than it sounds.
+"Depth grows about 1.3 ply per doubling" was true over 128–512 and false outside
+it: growth jumps to **2.4–2.7 ply per doubling** at the top, because
+`visits_each = max(sims/(phases*m), 1)` comes off its floor of 1 and consecutive
+simulations begin descending an already-carved line instead of widening a
+shallow frontier. My own extrapolation from that trend predicted 8 and 10 and
+was 16% low. A schedule artifact, not a law. See
+`bench/results/2026-10-19-depth-at-the-top-of-the-budget.md`.
+
+**The sims 32 vs 64 self-play A/B is answered, both halves.** At equal data the
+cheaper arm is **+101 ±37** early (gen 50–100) and **−114 ±30** late
+(gen 200–400) — the sign flips between gen100 and gen200, so doubling self-play
+search is actively harmful early and clearly helpful later. At equal wall clock
+`sims32` wins **+325 ±81** at 1.5h, **+147 ±52** at 2.8h and is level at 5.0h;
+the 1.53× cost per generation more than eats the late advantage everywhere we
+can see.
+
+**Decision: `sims 32` for any training run up to ~5h.** Beyond that is unknown.
+See `bench/results/2026-10-19-sims-crossover.md` and
+[[self-play-search-has-a-crossover]].
+
+**The 9 Oct deadlock was less destructive than recorded.** It contaminates only
+the period *after* the wedge; both arms shared the card up to 6.04h, so every
+checkpoint pair below that line was wall-clock-matched by construction. That is
+where the equal-wall-clock curve came from, after a week of treating the
+question as dead.
+
+### Next
+A **12h matched rerun, two GPUs, one arm per card**. The three wall-clock points
+are log-linear (−704 Elo per decade) and would put `sims64` ~300 Elo ahead at
+12h, which is the regime we actually train in — but that is three points against
+two parameters extrapolated 2.4×, the same move that just failed on leaf depth.
+Large and falsifiable, so worth the remaining ~$13.
+
+---
+
+## 2026-09-25
+
+_Two results landed today.
 
 **The policy-head search is over, and the incumbent won.** A 1000-game round robin
 (400 per engine) ranks `A-flat` +112 ±32, ahead of the `pw32-g145` anchor at +39,
