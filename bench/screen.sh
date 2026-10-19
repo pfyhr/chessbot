@@ -29,6 +29,15 @@
 set -u
 R=/Users/pontus/repos/chessbot
 FC=/Users/pontus/repos/fastchess/fastchess
+# Concurrency = active searches, not engine processes: fastchess runs CONC games
+# at once and chess is turn-based, so while one engine thinks the other waits.
+# Every M2 match before 2026-10-19 used 4, chosen before that was understood.
+#
+# The right number is the PERFORMANCE core count, not the logical one. This M2
+# has 12 logical cores but 8 P-cores; a search scheduled onto an E-core runs far
+# slower and drags the whole game it belongs to. Default to the P-cores and let
+# the idle halves and the OS have the rest.
+CONC=${CONC:-$(sysctl -n hw.perflevel0.logicalcpu 2>/dev/null || echo 4)}
 
 if (( $# < 4 )); then
   print -u2 "usage: $0 <runA> <genA> <runB> <genB> [elo1=15] [max_rounds=2000]"
@@ -51,7 +60,7 @@ $FC \
   -engine cmd=$R/.venv/bin/chess-uci args="--run $R/$RA" name=A option.Generation=$GA nodes=128 \
   -engine cmd=$R/.venv/bin/chess-uci args="--run $R/$RB" name=B option.Generation=$GB nodes=128 \
   -sprt elo0=0 elo1=$ELO1 alpha=0.05 beta=0.05 model=normalized \
-  -rounds $ROUNDS -games 2 -concurrency 4 \
+  -rounds $ROUNDS -games 2 -concurrency $CONC \
   -openings file=$R/bench/openings-4ply.epd format=epd order=random \
   -log file=/dev/null 2>&1 | tee $OUT | grep -E "^(Elo|Games|LLR|SPRT)" | tail -4
 

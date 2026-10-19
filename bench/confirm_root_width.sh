@@ -25,7 +25,15 @@ mkdir -p $OUT
 L=$OUT/report.log
 RAW=$OUT/raw.log
 ROUNDS=150        # 300 games per pairing, ~ +/-34 Elo
-CONC=4            # as every past M2 match here; calibrated at 136 games / 42 min
+# Concurrency = active searches, not engine processes: fastchess runs CONC games
+# at once and chess is turn-based, so while one engine thinks the other waits.
+# Every M2 match before 2026-10-19 used 4, chosen before that was understood.
+#
+# The right number is the PERFORMANCE core count, not the logical one. This M2
+# has 12 logical cores but 8 P-cores; a search scheduled onto an E-core runs far
+# slower and drags the whole game it belongs to. Default to the P-cores and let
+# the idle halves and the OS have the rest.
+CONC=${CONC:-$(sysctl -n hw.perflevel0.logicalcpu 2>/dev/null || echo 4)}
 
 cd $R || exit 1
 print "=== RootActions 8 confirmation, started $(date) ===" | tee -a $L
