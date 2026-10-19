@@ -1,0 +1,52 @@
+{
+  "note": "Elo is sims32's margin; positive means the cheaper arm won. Matched generations = equal self-play data (256 games/gen both arms).",
+  "nodes": 128,
+  "root_actions": 32,
+  "rows": [
+    {
+      "gen": 50,
+      "elo": 136.3,
+      "err": 55.53,
+      "games": 150,
+      "w": 93,
+      "l": 37,
+      "d": 20
+    },
+    {
+      "gen": 100,
+      "elo": 68.03,
+      "err": 50.25,
+      "games": 150,
+      "w": 82,
+      "l": 53,
+      "d": 15
+    },
+    {
+      "gen": 200,
+      "elo": -138.99,
+      "err": 54.12,
+      "games": 150,
+      "w": 40,
+      "l": 97,
+      "d": 13
+    },
+    {
+      "gen": 300,
+      "elo": -89.98,
+      "err": 50.06,
+      "games": 150,
+      "w": 48,
+      "l": 86,
+      "d": 16
+    },
+    {
+      "gen": 400,
+      "elo": -112.65,
+      "err": 52.72,
+      "games": 150,
+      "w": 45,
+      "l": 92,
+      "d": 13
+    }
+  ]
+}

@@ -60,7 +60,7 @@
     },
     "config_name": "config.json",
     "output": 0,
-    "seed": 20261008,
+    "seed": 20261026,
     "variant": 0,
     "type": 0,
     "gauntlet_seeds": 1,
@@ -69,8 +69,8 @@
     "wait": 0,
     "autosaveinterval": 20,
     "games": 2,
-    "rounds": 150,
-    "concurrency": 4,
+    "rounds": 75,
+    "concurrency": 8,
     "force_concurrency": false,
     "recover": false,
     "noswap": false,
@@ -89,44 +89,15 @@
     },
     "engines": [
         {
-            "name": "ra8",
+            "name": "sims32",
             "dir": "",
             "cmd": "/Users/pontus/repos/chessbot/.venv/bin/chess-uci",
-            "args": "--run /Users/pontus/repos/chessbot/runs/w-long",
+            "args": "--run /Users/pontus/repos/chessbot/runs/ab-salvage/ab-sims32",
             "restart": false,
             "options": [
                 [
                     "Generation",
-                    "695"
-                ],
-                [
-                    "RootActions",
-                    "8"
-                ]
-            ],
-            "limit": {
-                "tc": {
-                    "increment": 0,
-                    "fixed_time": 0,
-                    "time": 0,
-                    "moves": 0,
-                    "timemargin": 0
-                },
-                "nodes": 512,
-                "plies": 0
-            },
-            "variant": 0
-        },
-        {
-            "name": "ra32",
-            "dir": "",
-            "cmd": "/Users/pontus/repos/chessbot/.venv/bin/chess-uci",
-            "args": "--run /Users/pontus/repos/chessbot/runs/w-long",
-            "restart": false,
-            "options": [
-                [
-                    "Generation",
-                    "695"
+                    "100"
                 ],
                 [
                     "RootActions",
@@ -141,23 +112,52 @@
                     "moves": 0,
                     "timemargin": 0
                 },
-                "nodes": 512,
+                "nodes": 128,
+                "plies": 0
+            },
+            "variant": 0
+        },
+        {
+            "name": "sims64",
+            "dir": "",
+            "cmd": "/Users/pontus/repos/chessbot/.venv/bin/chess-uci",
+            "args": "--run /Users/pontus/repos/chessbot/runs/ab-salvage/ab-sims64",
+            "restart": false,
+            "options": [
+                [
+                    "Generation",
+                    "50"
+                ],
+                [
+                    "RootActions",
+                    "32"
+                ]
+            ],
+            "limit": {
+                "tc": {
+                    "increment": 0,
+                    "fixed_time": 0,
+                    "time": 0,
+                    "moves": 0,
+                    "timemargin": 0
+                },
+                "nodes": 128,
                 "plies": 0
             },
             "variant": 0
         }
     ],
     "stats": {
-        "ra8 vs ra32": {
-            "wins": 115,
-            "losses": 164,
-            "draws": 21,
-            "penta_WW": 16,
-            "penta_WD": 8,
-            "penta_WL": 75,
-            "penta_DD": 3,
-            "penta_LD": 7,
-            "penta_LL": 41
+        "sims32 vs sims64": {
+            "wins": 126,
+            "losses": 16,
+            "draws": 8,
+            "penta_WW": 53,
+            "penta_WD": 7,
+            "penta_WL": 13,
+            "penta_DD": 0,
+            "penta_LD": 1,
+            "penta_LL": 1
         }
     }
 }

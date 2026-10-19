@@ -1,0 +1,34 @@
+{
+  "note": "Elo is sims32's margin; positive means the cheaper arm won. Pairs matched on elapsed_total, all below the 6.04h deadlock so both arms shared the GPU under symmetric contention.",
+  "nodes": 128,
+  "root_actions": 32,
+  "rows": [
+    {
+      "hours_s32": 1.56,
+      "hours_s64": 1.45,
+      "g32": 100,
+      "g64": 50,
+      "elo": 325.17,
+      "err": 81.48,
+      "games": 150
+    },
+    {
+      "hours_s32": 2.95,
+      "hours_s64": 2.73,
+      "g32": 200,
+      "g64": 100,
+      "elo": 147.19,
+      "err": 52.42,
+      "games": 150
+    },
+    {
+      "hours_s32": 4.95,
+      "hours_s64": 5.1,
+      "g32": 350,
+      "g64": 200,
+      "elo": -27.85,
+      "err": 50.43,
+      "games": 150
+    }
+  ]
+}
