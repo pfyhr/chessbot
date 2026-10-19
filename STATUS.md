@@ -69,7 +69,9 @@ Both rules below cost days.
   is carrying the engine.
 - **Raw policy is poor** and search corrects it: 1.g4 at 61% raw becomes 1.e4 at 69% after
   search. Fine for playing, but it means the shortlist Gumbel samples from is close to
-  arbitrary, which is why widening `RootActions` from 16 to 32 was worth +160 Elo.
+  arbitrary, which is why widening `RootActions` from 16 to 32 was worth +102 Elo
+  (`pw-32` vs `pw-16`, head to head; the +160 sometimes quoted is against the baseline
+  and bundles proven-win propagation with the width change).
 - **`--init` resumes weights but the buffer starts empty.** Optimizer state is now saved,
   but every checkpoint written before 2026-08-25 lacks it and will warn on resume.
 - **Mate-in-1 on raw policy sits near chance** (0.065 against a 0.031 baseline) even though
@@ -78,8 +80,12 @@ Both rules below cost days.
 
 ## Next, roughly in order of expected value
 
-1. **Sweep `RootActions`.** 16 → 32 was worth +160 Elo and it has never been tuned. The
-   mate suite suggests it does not saturate until 64.
+1. ~~**Sweep `RootActions`.**~~ **Done 2026-10-10** — a 16-cell sweep over width × node
+   budget, 1,800 games. There is no single best width: the optimum walks right with the
+   budget and saturates at `ra32`, which already covers 96% of the 24.2 mean legal moves.
+   `ra8` is worth +41 ±25 at 128 nodes and loses everywhere above it. **Default stays
+   `ra32`.** See `bench/results/2026-10-10-width-budget-sweep.md`. The mate suite's hint
+   that it "does not saturate until 64" was not borne out.
 2. **SPRT instead of fixed-length matches.** Every Elo figure here is a 50–200 game match
    read at face value. `fastchess` supports SPRT and it is already installed.
 3. **Longer runs from `runs/night/gen248.pt`**, now that resume keeps optimizer state.

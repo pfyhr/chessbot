@@ -14,8 +14,8 @@ Elo against the `ra32` default. Positive means the narrower side won.
 |---|---|---|---|---|---|
 | **128** | −29 ±36 | **+41 ±25** | +26 ±40 | 0 | 3.76 |
 | **512** | −115 ±44 | −57 ±35 | +21 ±52 | 0 | 6.55 |
-| **1024** | −153 ±53 | −52 ±51 | −51 ±47 | 0 | — |
-| **2048** | −151 ±72 | −31 ±63 | −56 ±67 | 0 | — |
+| **1024** | −153 ±53 | −52 ±51 | −51 ±47 | 0 | 8.95 |
+| **2048** | −151 ±72 | −31 ±63 | −56 ±67 | 0 | 11.63 |
 
 The 128 row pools 600 games for `ra8` (300 on 6-7 Oct, 300 replicated 7-8 Oct);
 every other cell is 200 games at 512/1024 and 100 at 2048.
@@ -38,6 +38,14 @@ depth is only worth buying while it is scarce. At 128 nodes `ra32` reaches 3.76
 plies and trading width for depth pays. At 512 it already reaches 6.55 and the
 trade is roughly neutral. Past that, narrowing buys depth nobody needs and pays
 for it in move coverage, which is why the losses deepen rather than flatten.
+
+*Measured 2026-10-19, after this was written.* The 1024 and 2048 depth figures
+in the table above were an extrapolation when this document was published; they
+have since been measured, at **8.95** and **11.63** plies. The argument holds —
+at 1024 nodes `ra32` alone puts 42% of its leaves at depth 9 or beyond — but the
+real numbers are about 16% higher than the trend line predicted, because depth
+growth per doubling nearly doubles at the top of the range. See
+`2026-10-19-depth-at-the-top-of-the-budget.md`.
 
 ## The decision
 

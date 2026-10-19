@@ -16,10 +16,19 @@ Mean leaf depth. Full histograms in `data/2026-10-07-leaf-depth.json`.
 | 128 | 4.68 | 4.14 | **3.76** |
 | 256 | 6.26 | 5.28 | 5.12 |
 | 512 | 8.44 | 7.36 | 6.55 |
+| 1024 | — | — | 8.95 |
+| 2048 | — | — | 11.63 |
 
 Depth grows about 1.3 ply per doubling of simulations, and narrower roots are
 deeper at every budget. The bolded cells are what we actually run: self-play at
 32/ra32, match play at 128/ra32.
+
+The 1024 and 2048 rows were measured later, on 2026-10-19
+(`data/2026-10-19-leaf-depth-high.json`, 64 games each), and only at `ra32` —
+the default, and the only width we run at those budgets. See
+`2026-10-19-depth-at-the-top-of-the-budget.md`: growth is **not** a constant 1.3
+ply per doubling, it nearly doubles once the halving schedule can afford more
+than a token visit per root child.
 
 **Why width costs depth.** Traced from `begin_phase` and `next_root_edge` at
 `sims = 32`, where `visits_each = max(sims / (phases * m), 1)`:
@@ -93,9 +102,11 @@ cautions before adopting it:
 two jobs — choose the move, and produce the improved-policy training target —
 and every number here measures only the first, on a network that is already
 trained. The two come apart, and we have direct evidence of it: root actions
-16→32 is in the log at **+160 Elo of trained strength**, and the depth table
+16→32 is in the log at **+102 Elo of trained strength**, and the depth table
 shows that same change makes the tree *shallower* (1.87 → 1.57). If training
-wanted depth, that should have hurt.
+wanted depth, that should have hurt. (+102 is `pw-32` against `pw-16`, the
+isolated width change; the +160 in the August log is against the baseline and
+bundles proven-win propagation with it.)
 
 There is a reason it might not. At `sims = 32`, `ra32` sequential halving never
 halves: every root move gets exactly one visit, so the improved policy is a clean
