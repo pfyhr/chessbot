@@ -65,12 +65,20 @@ if [ "$(nvidia-smi --query-gpu=name --format=csv,noheader | sort -u | wc -l)" -n
   exit 1
 fi
 
-common="--considered 32 --keep-every 50 --games 256 --concurrency 256 \
+# keep-every is a DISK budget, not a science choice. A checkpoint is 126 MB and
+# a rented box typically has 16 GB. At the 2026-10-20 box's speed each arm
+# reaches ~2,500 and ~1,500 generations in 12h, which at keep-every 50 would be
+# 10.1 GB of checkpoints on top of ~3.4 GB of toolchain and build artifacts --
+# too close to the line. At 100 it is 5.2 GB and the curve still has 26 and 16
+# matched points, far more resolution than the 9 the first attempt salvaged.
+KEEP=${KEEP:-100}
+common="--considered 32 --keep-every $KEEP --games 256 --concurrency 256 \
         --max-plies 400 --steps 250 --batch 512 --window 8 --lr 5e-4 \
         --blocks 6 --channels 96 --generations 100000 --max-hours $HOURS"
 
 echo "=== sims A/B, started $(date) ===" | tee "$OUT/sims-ab.log"
-echo "sims32 on GPU$GPU32, sims64 on GPU$GPU64, ${HOURS}h wall clock, considered=32" | tee -a "$OUT/sims-ab.log"
+echo "sims32 on GPU$GPU32, sims64 on GPU$GPU64, ${HOURS}h wall clock, considered=32, keep-every $KEEP" | tee -a "$OUT/sims-ab.log"
+df -h "$OUT" | awk 'NR==2{print "  disk: "$4" free of "$2}' | tee -a "$OUT/sims-ab.log"
 
 # shellcheck disable=SC2086
 CUDA_VISIBLE_DEVICES=$GPU32 .venv/bin/chess-train $common --sims 32 \

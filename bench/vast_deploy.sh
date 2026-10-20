@@ -2,7 +2,9 @@
 # Provision a rented GPU box and start the width-against-budget sweep.
 #
 #   ./bench/vast_deploy.sh 1.2.3.4 8640 check   # inspect only, install nothing
-#   ./bench/vast_deploy.sh 1.2.3.4 8640         # ship, build, calibrate, launch
+#   ./bench/vast_deploy.sh 1.2.3.4 8640 probe   # build, then measure both arms
+#   ./bench/vast_deploy.sh 1.2.3.4 8640 ab      # build and launch the sims A/B
+#   ./bench/vast_deploy.sh 1.2.3.4 8640         # ship, build, calibrate, launch sweep
 #
 # Ships source and one checkpoint rather than cloning: the work is on the laptop
 # and not pushed. Two things about Vast containers that this handles and a naive
@@ -106,18 +108,28 @@ if [ "$MODE" = "probe" ]; then
   say "does this card actually have kernels, or will it JIT?"
   $SSH "$BASEPY -c '
 import torch
-cap = torch.cuda.get_device_capability()
 arch = torch.cuda.get_arch_list()
-want = \"sm_%d%d\" % cap
-print(\"device\", torch.cuda.get_device_name(0), \"| capability\", \"%d.%d\" % cap)
+n = torch.cuda.device_count()
 print(\"built for:\", \" \".join(arch))
-print(\"native kernels for this card:\", \"YES\" if want in arch else \"NO -- will JIT from PTX, first run slow and maybe much slower overall\")
+names = set()
+for i in range(n):
+    cap = torch.cuda.get_device_capability(i)
+    want = \"sm_%d%d\" % cap
+    nm = torch.cuda.get_device_name(i)
+    names.add(nm)
+    print(\"  gpu%d\" % i, nm, \"| capability %d.%d\" % cap,
+          \"| native kernels:\", \"YES\" if want in arch else \"NO -- will JIT from PTX\")
+print(\"devices:\", n, \"| identical:\", \"YES\" if len(names) == 1 else \"NO -- a hardware difference would confound the arms\")
+if n < 2: print(\"ERROR: the A/B needs two cards, one per arm\")
 '"
 
-  say "both A/B arms sharing the card, one generation each"
-  $SSH "cd ~/chessbot && export CUDA_VISIBLE_DEVICES=0 && \
-    ( .venv/bin/python bench/generation_profile.py --games 256 --steps 250 --sims 32 >/tmp/p32.txt 2>&1 & \
-      .venv/bin/python bench/generation_profile.py --games 256 --steps 250 --sims 64 >/tmp/p64.txt 2>&1 & \
+  say "both A/B arms, ONE PER CARD, one generation each"
+  # Not sharing a card: that is the design that deadlocked on 2026-10-09. This
+  # also measures the real per-generation cost under the CPU contention the
+  # actual run will have, which is the number that decides the box.
+  $SSH "cd ~/chessbot && \
+    ( CUDA_VISIBLE_DEVICES=0 .venv/bin/python bench/generation_profile.py --games 256 --steps 250 --sims 32 >/tmp/p32.txt 2>&1 & \
+      CUDA_VISIBLE_DEVICES=1 .venv/bin/python bench/generation_profile.py --games 256 --steps 250 --sims 64 >/tmp/p64.txt 2>&1 & \
       wait )
     for f in /tmp/p32.txt /tmp/p64.txt; do
       echo \"--- \$f ---\"; grep -E 'generation total|GPU-bound|network forward|Rust driver' \$f
@@ -138,6 +150,11 @@ print(\"native kernels for this card:\", \"YES\" if want in arch else \"NO -- wi
   exit 0
 fi
 
+if [ "$MODE" = "ab" ]; then
+  # The match calibration below sizes a fastchess sweep and tells us nothing
+  # about a training run. Skip straight to the launch.
+  :
+else
 say "calibration: $((CONC*2)) games at 512 nodes (two full waves)"
 CAL=$($SSH "cd ~/chessbot && export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 && t0=\$SECONDS
   ~/fastchess/fastchess \
@@ -167,6 +184,22 @@ awk -v s="$CAL" -v c="$CONC" 'BEGIN{
   else if (t>45) print "  usable; consider dropping the 2048 rung.";
   else           print "  nominal. Go.";
 }'
+fi
+
+if [ "$MODE" = "ab" ]; then
+  say "starting the sims A/B in tmux (${HOURS:-12}h, one arm per card)"
+  $SSH "cd ~/chessbot && tmux kill-session -t ab 2>/dev/null || true
+        tmux new-session -d -s ab 'HOURS=${HOURS:-12} GPU32=0 GPU64=1 bash ~/chessbot/bench/sims_ab.sh'
+        sleep 5 && tmux ls && tail -5 ~/chessbot/runs/sims-ab.log 2>/dev/null"
+  echo
+  echo "watch:   ssh -p $PORT root@$HOST 'tail -f ~/chessbot/runs/ab-sims32.log'"
+  echo "progress: ssh -p $PORT root@$HOST \"stat -c %y ~/chessbot/runs/ab-sims*.log\""
+  echo
+  echo "Check PROGRESS, not liveness -- on 2026-10-09 a wedged arm passed every"
+  echo "liveness check for 9.7h. The script's watchdog aborts both arms after"
+  echo "20min of no advance, but verify the log mtimes are moving yourself too."
+  exit 0
+fi
 
 say "starting the sweep in tmux"
 $SSH "cd ~/chessbot && tmux kill-session -t sweep 2>/dev/null || true
