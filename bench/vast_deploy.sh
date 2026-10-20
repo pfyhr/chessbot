@@ -114,11 +114,18 @@ print(\"built for:\", \" \".join(arch))
 names = set()
 for i in range(n):
     cap = torch.cuda.get_device_capability(i)
-    want = \"sm_%d%d\" % cap
     nm = torch.cuda.get_device_name(i)
     names.add(nm)
+    # A cubin is forward-compatible within a major compute capability: an
+    # sm_86 binary loads natively on an sm_89 device. Checking for an exact
+    # sm_XY match calls a perfectly good card a JIT risk -- torch 2.14 ships
+    # sm_86 but not sm_89, and a 4090 runs it natively.
+    usable = [x for x in arch
+              if x.startswith(\"sm_\")
+              and int(x[3:-1] or 0) == cap[0] and int(x[-1]) <= cap[1]]
+    best = max(usable, key=lambda x: int(x[-1])) if usable else None
     print(\"  gpu%d\" % i, nm, \"| capability %d.%d\" % cap,
-          \"| native kernels:\", \"YES\" if want in arch else \"NO -- will JIT from PTX\")
+          \"| native kernels:\", (\"YES via \" + best) if best else \"NO -- will JIT from PTX\")
 print(\"devices:\", n, \"| identical:\", \"YES\" if len(names) == 1 else \"NO -- a hardware difference would confound the arms\")
 if n < 2: print(\"ERROR: the A/B needs two cards, one per arm\")
 '"
