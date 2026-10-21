@@ -1,0 +1,140 @@
+{
+  "note": "Elo is sims32's margin; positive means the cheaper arm won. 13.6h run, 2x RTX 4090, one arm per card, 128 nodes, RootActions 32.",
+  "rows": [
+    {
+      "label": "~ 1.50h",
+      "gen32": 100,
+      "gen64": 50,
+      "elo": 172.78,
+      "err": 60.7,
+      "games": 150,
+      "kind": "wallclock"
+    },
+    {
+      "label": "~ 2.89h",
+      "gen32": 200,
+      "gen64": 100,
+      "elo": 20.87,
+      "err": 51.5,
+      "games": 150,
+      "kind": "wallclock"
+    },
+    {
+      "label": "~ 4.90h",
+      "gen32": 350,
+      "gen64": 200,
+      "elo": -27.85,
+      "err": 54.13,
+      "games": 150,
+      "kind": "wallclock"
+    },
+    {
+      "label": "~ 6.20h",
+      "gen32": 450,
+      "gen64": 250,
+      "elo": -63.23,
+      "err": 51.66,
+      "games": 150,
+      "kind": "wallclock"
+    },
+    {
+      "label": "~ 7.51h",
+      "gen32": 550,
+      "gen64": 300,
+      "elo": -80.14,
+      "err": 56.5,
+      "games": 150,
+      "kind": "wallclock"
+    },
+    {
+      "label": "~ 9.45h",
+      "gen32": 700,
+      "gen64": 400,
+      "elo": -75.28,
+      "err": 52.18,
+      "games": 150,
+      "kind": "wallclock"
+    },
+    {
+      "label": "~10.74h",
+      "gen32": 800,
+      "gen64": 450,
+      "elo": -60.84,
+      "err": 54.04,
+      "games": 150,
+      "kind": "wallclock"
+    },
+    {
+      "label": "~12.66h",
+      "gen32": 950,
+      "gen64": 550,
+      "elo": -37.2,
+      "err": 57.25,
+      "games": 150,
+      "kind": "wallclock"
+    },
+    {
+      "label": "gen50",
+      "gen32": 50,
+      "gen64": 50,
+      "elo": -17.39,
+      "err": 61.9,
+      "games": 100,
+      "kind": "equaldata"
+    },
+    {
+      "label": "gen100",
+      "gen32": 100,
+      "gen64": 100,
+      "elo": -96.19,
+      "err": 64.25,
+      "games": 100,
+      "kind": "equaldata"
+    },
+    {
+      "label": "gen200",
+      "gen32": 200,
+      "gen64": 200,
+      "elo": -190.85,
+      "err": 80.57,
+      "games": 100,
+      "kind": "equaldata"
+    },
+    {
+      "label": "gen300",
+      "gen32": 300,
+      "gen64": 300,
+      "elo": -401.92,
+      "err": 122.62,
+      "games": 100,
+      "kind": "equaldata"
+    },
+    {
+      "label": "gen400",
+      "gen32": 400,
+      "gen64": 400,
+      "elo": -251.89,
+      "err": 76.93,
+      "games": 100,
+      "kind": "equaldata"
+    },
+    {
+      "label": "gen500",
+      "gen32": 500,
+      "gen64": 500,
+      "elo": -164.07,
+      "err": 74.03,
+      "games": 100,
+      "kind": "equaldata"
+    },
+    {
+      "label": "gen550",
+      "gen32": 550,
+      "gen64": 550,
+      "elo": -186.25,
+      "err": 71.7,
+      "games": 100,
+      "kind": "equaldata"
+    }
+  ]
+}

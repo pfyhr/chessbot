@@ -1,0 +1,25 @@
+=== sims A/B curves, started Wed Oct 21 08:34:44 UTC 2026 ===
+128 nodes, RootActions 32, concurrency 16; positive Elo = sims32 won
+
+--- EQUAL WALL CLOCK (150 games each) ---
+~ 1.50h  s32-g100 vs s64-g50  ::  Elo: 172.78 +/- 60.70, nElo: 188.77 +/- 55.60  ::  Games: 150, Wins: 100, Losses: 31, Draws: 19, Points: 109.5 (73.00 %)  ::  922s
+~ 2.89h  s32-g200 vs s64-g100  ::  Elo: 20.87 +/- 51.50, nElo: 22.75 +/- 55.60  ::  Games: 150, Wins: 70, Losses: 61, Draws: 19, Points: 79.5 (53.00 %)  ::  848s
+~ 4.90h  s32-g350 vs s64-g200  ::  Elo: -27.85 +/- 54.13, nElo: -28.97 +/- 55.60  ::  Games: 150, Wins: 61, Losses: 73, Draws: 16, Points: 69.0 (46.00 %)  ::  722s
+~ 6.20h  s32-g450 vs s64-g250  ::  Elo: -63.23 +/- 51.66, nElo: -70.13 +/- 55.60  ::  Games: 150, Wins: 52, Losses: 79, Draws: 19, Points: 61.5 (41.00 %)  ::  737s
+~ 7.51h  s32-g550 vs s64-g300  ::  Elo: -80.14 +/- 56.50, nElo: -82.53 +/- 55.60  ::  Games: 150, Wins: 47, Losses: 81, Draws: 22, Points: 58.0 (38.67 %)  ::  803s
+~ 9.45h  s32-g700 vs s64-g400  ::  Elo: -75.28 +/- 52.18, nElo: -83.45 +/- 55.60  ::  Games: 150, Wins: 51, Losses: 83, Draws: 16, Points: 59.0 (39.33 %)  ::  742s
+~10.74h  s32-g800 vs s64-g450  ::  Elo: -60.84 +/- 54.04, nElo: -64.44 +/- 55.60  ::  Games: 150, Wins: 54, Losses: 80, Draws: 16, Points: 62.0 (41.33 %)  ::  724s
+~12.66h  s32-g950 vs s64-g550  ::  Elo: -37.20 +/- 57.25, nElo: -36.74 +/- 55.60  ::  Games: 150, Wins: 59, Losses: 75, Draws: 16, Points: 67.0 (44.67 %)  ::  737s
+
+--- EQUAL DATA (100 games each) ---
+gen50  s32-g50 vs s64-g50  ::  Elo: -17.39 +/- 61.90, nElo: -19.36 +/- 68.10  ::  Games: 100, Wins: 38, Losses: 43, Draws: 19, Points: 47.5 (47.50 %)  ::  693s
+gen100  s32-g100 vs s64-g100  ::  Elo: -96.19 +/- 64.25, nElo: -108.74 +/- 68.10  ::  Games: 100, Wins: 32, Losses: 59, Draws: 9, Points: 36.5 (36.50 %)  ::  641s
+gen200  s32-g200 vs s64-g200  ::  Elo: -190.85 +/- 80.57, nElo: -201.94 +/- 68.10  ::  Games: 100, Wins: 21, Losses: 71, Draws: 8, Points: 25.0 (25.00 %)  ::  545s
+gen300  s32-g300 vs s64-g300  ::  Elo: -401.92 +/- 122.62, nElo: -543.08 +/- 68.10  ::  Games: 100, Wins: 8, Losses: 90, Draws: 2, Points: 9.0 (9.00 %)  ::  475s
+gen400  s32-g400 vs s64-g400  ::  Elo: -251.89 +/- 76.93, nElo: -320.69 +/- 68.10  ::  Games: 100, Wins: 16, Losses: 78, Draws: 6, Points: 19.0 (19.00 %)  ::  496s
+gen500  s32-g500 vs s64-g500  ::  Elo: -164.07 +/- 74.03, nElo: -178.58 +/- 68.10  ::  Games: 100, Wins: 26, Losses: 70, Draws: 4, Points: 28.0 (28.00 %)  ::  455s
+gen550  s32-g550 vs s64-g550  ::  Elo: -186.25 +/- 71.70, nElo: -218.01 +/- 68.10  ::  Games: 100, Wins: 23, Losses: 72, Draws: 5, Points: 25.5 (25.50 %)  ::  439s
+
+timeouts: 0
+0
+=== COMPLETE Wed Oct 21 11:21:04 UTC 2026 ===

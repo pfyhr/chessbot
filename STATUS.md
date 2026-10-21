@@ -3,6 +3,33 @@
 _Last updated 2026-10-19. **Nothing is running locally; a 12h two-GPU rental is
 the next thing to book.**_
 
+## 2026-10-21 — self-play search: better per game, barely better per hour
+
+**`sims 32` stays the self-play default.** A 13.6h two-GPU A/B (one arm per
+card) measured both halves of the question on 1,900 games:
+
+- **Equal data:** doubling search is worth a mean **−239 Elo** from gen200 on,
+  peaking at **−402 ±123**. The largest effect any single setting has shown in
+  this project.
+- **Equal wall clock:** that collapses to at most **−80 ±56** around 7.5h, and
+  *decays* to −37 by 12.66h. `sims32` wins outright below ~4h.
+
+The gap between those two rows is the whole answer: `sims64` costs **1.76×** per
+generation, so at a matched hour it has seen half the games, and the quality
+gain very nearly cancels. One point (~4.9h, −28 ±54) reproduces the 19 Oct run's
+−28 ±50 on different hardware, which is the best replication this project has.
+
+Four extrapolations along the way all overstated the per-hour benefit, by 2.6×
+to 8.5×, because the curve has a peak rather than being log-linear. See
+`bench/results/2026-10-21-sims-settled.md` and
+[[self-play-search-has-a-crossover]].
+
+**Cost:** the run should have been 24h. A watchdog bug of mine — a regex that
+stopped matching once the generation number reached four digits and lost its
+leading space — killed two healthy arms at 13.6h, and ~11h of idle billing
+followed because nothing reported the stop. Fixed, with CPU corroboration
+required before any kill.
+
 ## 2026-10-19 — search depth at the top of the budget, and the sims A/B settled
 
 **Leaf depth measured at 1024 and 2048 simulations**, the two budgets the
