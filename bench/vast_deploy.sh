@@ -101,6 +101,30 @@ REMOTE
 scp -q -P "$PORT" $SSHOPTS /tmp/remote_setup.sh root@"$HOST":/tmp/
 $SSH "BASEPY='$BASEPY' bash /tmp/remote_setup.sh"
 
+# EGRESS TEST, before committing hours to this box. On 2026-10-21 a host
+# advertising 857 Mbps up delivered 0.2 Mbps to Sweden -- 49h for one run's
+# checkpoints. Uploads from that same box to Cloudflare ran at 31-39 Mbps and
+# downloads INTO it at 54, so neither the listing, DLPerf, nor a download test
+# would have caught it. The only number that matters is bytes per second from
+# the box to the machine that will hold the results.
+say "egress: can we actually get results off this box?"
+$SSH 'dd if=/dev/urandom of=/tmp/egress.bin bs=1M count=40 2>/dev/null'
+EGT0=$(date +%s)
+$SSH -o Compression=no 'cat /tmp/egress.bin' > /tmp/egress_local.bin 2>/dev/null
+EGEL=$(( $(date +%s) - EGT0 ))
+EGSZ=$(wc -c < /tmp/egress_local.bin | tr -d ' ')
+$SSH 'rm -f /tmp/egress.bin'; rm -f /tmp/egress_local.bin
+awk -v sz="$EGSZ" -v el="$EGEL" 'BEGIN{
+  if (el < 1) el = 1;
+  mbps = sz*8/el/1000000;
+  printf "  %.0f MB in %ds = %.1f Mbps to here\n", sz/1048576, el, mbps;
+  gb = 4.4;
+  printf "  a run\x27s %.1f GB of checkpoints would take %.1f h at this rate\n", gb, gb*1024*8/mbps/3600;
+  if (mbps < 5)       print "  UNUSABLE -- pull checkpoints inline or take another offer.";
+  else if (mbps < 50) print "  slow; pull checkpoints inline rather than at the end.";
+  else                print "  fine.";
+}'
+
 say "smoke test"
 $SSH 'cd ~/chessbot && printf "uci\nquit\n" | .venv/bin/chess-uci --run ~/chessbot/runs/champ 2>&1 | grep -E "^id name|Device"'
 

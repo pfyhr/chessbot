@@ -97,28 +97,57 @@ echo "arms running: sims32 pid $P32, sims64 pid $P64" | tee -a "$OUT/sims-ab.log
 # BOTH -- a wall-clock-matched comparison is already dead at that point, and
 # burning another nine hours only makes the bill worse.
 STALL_MIN=${STALL_MIN:-20}
+# 2026-10-21: the previous version of this watchdog killed two HEALTHY arms at
+# 13.6h of a 24h run, costing 10.4h. Three defects, all of them here:
+#
+#   1. It counted generations with `grep -cE '^ +[0-9]+ +256'`, which requires a
+#      leading space. The generation number is right-aligned in a 4-wide field,
+#      so at gen 1000 the padding vanishes and the regex stops matching. The
+#      counter froze at exactly 1000 while training ran on perfectly.
+#   2. The stall test was `g32 == last32 || g64 == last64`. One frozen counter
+#      therefore tripped it every cycle regardless of the other arm.
+#   3. It killed on the counter alone. It even logged `state: Rl+ / Rl+` --
+#      both RUNNING, not D-state wedged -- and killed them anyway.
+#
+# Now: a padding-proof regex, per-arm stall tracking, and NO kill without
+# corroboration from the thing we actually care about (the process not burning
+# CPU). A wedged arm sits in D with its CPU time frozen; a slow arm does not.
+cpu_ticks () { awk '{print $14+$15}' "/proc/$1/stat" 2>/dev/null || echo -1; }
+gen_count () { grep -cE '^ *[0-9]+ +256 ' "$1" 2>/dev/null || echo 0; }
+
 watchdog () {
-  local last32=-1 last64=-1 since=0
+  local last32=-1 last64=-1 since32=0 since64=0
+  local c32 c64 lc32=-1 lc64=-1
   while kill -0 "$P32" 2>/dev/null && kill -0 "$P64" 2>/dev/null; do
     sleep 300
     local g32 g64
-    g32=$(grep -cE '^ +[0-9]+ +256' "$OUT/ab-sims32.log" 2>/dev/null || echo 0)
-    g64=$(grep -cE '^ +[0-9]+ +256' "$OUT/ab-sims64.log" 2>/dev/null || echo 0)
-    if [ "$g32" -eq "$last32" ] || [ "$g64" -eq "$last64" ]; then
-      since=$((since + 5))
-      if [ "$since" -ge "$STALL_MIN" ]; then
-        {
-          echo "WATCHDOG: no progress for ${since}min (sims32 $g32 gens, sims64 $g64 gens)"
-          echo "WATCHDOG: an arm has stalled -- the matched comparison is void. Aborting both."
-          echo "WATCHDOG: state: $(ps -o stat= -p $P32 2>/dev/null) / $(ps -o stat= -p $P64 2>/dev/null) (D = wedged in the driver)"
-        } | tee -a "$OUT/sims-ab.log"
-        kill -9 "$P32" "$P64" 2>/dev/null
-        return
-      fi
-    else
-      since=0
+    g32=$(gen_count "$OUT/ab-sims32.log")
+    g64=$(gen_count "$OUT/ab-sims64.log")
+    c32=$(cpu_ticks "$P32"); c64=$(cpu_ticks "$P64")
+
+    # Per-arm, and only count a stall when the CPU is ALSO frozen. A generation
+    # can legitimately take longer than one 5-minute sample; a process that has
+    # burned no CPU in five minutes is not computing anything.
+    if [ "$g32" -eq "$last32" ] && [ "$c32" = "$lc32" ]; then
+      since32=$((since32 + 5)); else since32=0; fi
+    if [ "$g64" -eq "$last64" ] && [ "$c64" = "$lc64" ]; then
+      since64=$((since64 + 5)); else since64=0; fi
+
+    local stalled="" mins=0
+    if [ "$since32" -ge "$STALL_MIN" ]; then stalled="sims32"; mins=$since32
+    elif [ "$since64" -ge "$STALL_MIN" ]; then stalled="sims64"; mins=$since64; fi
+
+    if [ -n "$stalled" ]; then
+      {
+        echo "WATCHDOG: $stalled has not advanced a generation OR burned CPU in ${mins}min"
+        echo "WATCHDOG: sims32 gen=$g32 cpu=$c32 (was $lc32) state=$(ps -o stat= -p $P32 2>/dev/null)"
+        echo "WATCHDOG: sims64 gen=$g64 cpu=$c64 (was $lc64) state=$(ps -o stat= -p $P64 2>/dev/null)"
+        echo "WATCHDOG: the matched comparison is void from here. Aborting both."
+      } | tee -a "$OUT/sims-ab.log"
+      kill -9 "$P32" "$P64" 2>/dev/null
+      return
     fi
-    last32=$g32; last64=$g64
+    last32=$g32; last64=$g64; lc32=$c32; lc64=$c64
   done
 }
 watchdog &
