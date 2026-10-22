@@ -65,6 +65,24 @@ Recommendation: **aida gpu0 if Stefan can spare it**, since this is a single-arm
 run with no need for a matched second card, and the cost is then zero. A rental
 is the fallback. Do not rent two cards for one arm.
 
+## Running: `runs/long-oct`, started 2026-10-22 22:32 CEST
+
+Resumed from `weekend/gen1371` on Jupiter, 72h, ending ~Sun 25 Oct 22:32 CEST.
+tmux session `train`; checkpoints local at keep-every 25.
+
+**Measured 95s/generation, against the 142s this plan projected** — 1.5x faster,
+so ~2,719 generations rather than ~1,825. Checked for the obvious confound and
+it does not hold: the weekend run was flat at 138-143s across all 1,372 of its
+generations at the same mean game length (~130 plies), so this is not a warm-up
+or game-length effect. The cause is software — newer torch, `torch.compile` on
+by default, and bridge work since September.
+
+**`train.log` is useless for monitoring.** Python buffers stdout to a file, so
+it sat at 109 bytes reporting zero generations while the run was 15 generations
+in. Read `history.json` or the checkpoint mtimes instead. This is the same
+failure as the watchdog regex that cost 10h on the rental: a status channel that
+does not update is worse than none, because it reads as authoritative.
+
 ## [DECIDE] 2 — how long
 
 The longest run so far is `weekend`, 1,372 generations over 54.1h. Meaningful

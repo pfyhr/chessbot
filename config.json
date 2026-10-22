@@ -51,16 +51,16 @@
         "append_file": true
     },
     "sprt": {
-        "alpha": 0.0,
-        "beta": 0.0,
+        "alpha": 0.05,
+        "beta": 0.05,
         "elo0": 0.0,
-        "elo1": 0.0,
-        "model": "normalized",
-        "enabled": false
+        "elo1": 50.0,
+        "model": "logistic",
+        "enabled": true
     },
     "config_name": "config.json",
     "output": 0,
-    "seed": 20261026,
+    "seed": 20261111,
     "variant": 0,
     "type": 0,
     "gauntlet_seeds": 1,
@@ -69,7 +69,7 @@
     "wait": 0,
     "autosaveinterval": 20,
     "games": 2,
-    "rounds": 75,
+    "rounds": 700,
     "concurrency": 8,
     "force_concurrency": false,
     "recover": false,
@@ -89,15 +89,15 @@
     },
     "engines": [
         {
-            "name": "sims32",
+            "name": "cand",
             "dir": "",
             "cmd": "/Users/pontus/repos/chessbot/.venv/bin/chess-uci",
-            "args": "--run /Users/pontus/repos/chessbot/runs/ab-salvage/ab-sims32",
+            "args": "--run /Users/pontus/repos/chessbot/runs/w-long",
             "restart": false,
             "options": [
                 [
                     "Generation",
-                    "100"
+                    "695"
                 ],
                 [
                     "RootActions",
@@ -118,15 +118,15 @@
             "variant": 0
         },
         {
-            "name": "sims64",
+            "name": "base",
             "dir": "",
             "cmd": "/Users/pontus/repos/chessbot/.venv/bin/chess-uci",
-            "args": "--run /Users/pontus/repos/chessbot/runs/ab-salvage/ab-sims64",
+            "args": "--run /Users/pontus/repos/chessbot/runs/w-long",
             "restart": false,
             "options": [
                 [
                     "Generation",
-                    "50"
+                    "695"
                 ],
                 [
                     "RootActions",
@@ -148,16 +148,16 @@
         }
     ],
     "stats": {
-        "sims32 vs sims64": {
-            "wins": 126,
-            "losses": 16,
-            "draws": 8,
-            "penta_WW": 53,
-            "penta_WD": 7,
-            "penta_WL": 13,
+        "cand vs base": {
+            "wins": 124,
+            "losses": 122,
+            "draws": 32,
+            "penta_WW": 25,
+            "penta_WD": 18,
+            "penta_WL": 56,
             "penta_DD": 0,
-            "penta_LD": 1,
-            "penta_LL": 1
+            "penta_LD": 14,
+            "penta_LL": 26
         }
     }
 }
