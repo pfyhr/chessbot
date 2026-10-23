@@ -3,6 +3,19 @@
 _Last updated 2026-10-19. **Nothing is running locally; a 12h two-GPU rental is
 the next thing to book.**_
 
+## Queued — do after `runs/long-oct` finishes (~Sun 25 Oct 22:32 CEST)
+
+**Confirm that `torch.compile` is why generations got 1.5x faster.**
+`bench/compile_ab.sh` is written and ready; it refuses to start while training
+is live, because a timing test run under contention measures the contention.
+
+`runs/long-oct` averages 95s/generation. The 2026-09-20 weekend run, same
+config and same mean game length (~130 plies), averaged 141s and was flat at
+138-143s across all 1,372 of its generations — so the speedup is not a warm-up
+or game-length artifact. It is software: newer torch, `torch.compile` on by
+default, and bridge work in between. The script isolates the compile half with
+alternating A-B blocks run sequentially, and records the torch version.
+
 ## 2026-10-21 — self-play search: better per game, barely better per hour
 
 **`sims 32` stays the self-play default.** A 13.6h two-GPU A/B (one arm per
