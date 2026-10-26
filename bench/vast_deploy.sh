@@ -206,17 +206,27 @@ if [ "$MODE" = "measure" ]; then
 
   say "read it against what was declared"
   cat <<'THRESH'
-  Jupiter is 97.0 s/generation, 37.1 generations/hour.
+  Jupiter is 85.2 s/generation, 42.3 generations/hour.
+
+  THIS BASELINE WAS CORRECTED ON 2026-10-26 and the thresholds moved with it.
+  It used to read 97.0 s / 37.1 per hour, taken from runs/long-oct -- but every
+  generation there carries evaluated:true, so 97.0 INCLUDES the ~12 s probe
+  suite. The numbers measured below come from generation_profile.py, which
+  reports "generation total (no eval)". Reading a no-probe number against a
+  with-probe baseline flattered every candidate box by ~14%, enough to flip a
+  verdict: 45 s/generation is 2.16x against 97.0 and survives, 1.89x against
+  85.2 and is killed. 85.2 s is the like-for-like figure, measured the same day
+  by bench/driver_threads.sh.
 
   WORTH RENTING if, in the best precision regime that passes a quality check:
-    generations/hour  >= 3.0x Jupiter  (>= 111/h, i.e. <= 32.3 s/generation)
+    generations/hour  >= 3.0x Jupiter  (>= 127/h, i.e. <= 28.4 s/generation)
     GPU-bound fraction >= 65%
     egress            >= 10 Mbps
   KILLS IT if:
-    generations/hour  <  2.0x Jupiter  (>= 48.5 s/generation)
+    generations/hour  <  2.0x Jupiter  (<  85/h, i.e. >= 42.6 s/generation)
     GPU-bound fraction <  50%
     egress            <  5 Mbps
-    drivercost 1-thread < 120,000 evals/s
+    drivercost 1-thread < 126,000 evals/s   (0.4x Jupiter's measured 314,542)
 
   bf16 is a SPEED number only until a loss curve and a match say otherwise
   (section 1.9). Do not read a bf16 result against the thresholds before then.

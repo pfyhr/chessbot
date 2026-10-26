@@ -1,0 +1,51 @@
+=== driver threading, started Mon Oct 26 19:29:34 CET 2026 ===
+host Jupiter  Apple M2 Max  12 cores
+load at start: 1.69 1.31 1.35
+
+drivercost feeds an instant evaluator, so this is the driver alone.
+    Finished `release` profile [optimized] target(s) in 0.06s
+  threads 1: 314542 evals/sec
+  threads 2: 359141 evals/sec
+  threads 4: 400285 evals/sec
+  threads 8: 377506 evals/sec
+
+   threads    evals/sec   speedup  efficiency
+         1      314,542     1.00x       100%
+         2      359,141     1.14x        57%
+         4      400,285     1.27x        32%
+         8      377,506     1.20x        15%
+
+  2026-08-20 measured 292,646 evals/sec on one thread of this machine.
+  THREADING DOES NOT PAY at this granularity either. Say so and stop;
+  the rented-GPU plan then has to assume a single-threaded driver.
+
+No torch.compile here on purpose: generation_profile feeds a VARIABLE
+batch size and compile would recompile for every shape. Compile only
+touches the GPU half anyway, and phase 3 measures it with bucketing on.
+  threads 1:
+    generation total (no eval)            83.5s
+    GPU-bound fraction                   92.3%
+    driver seconds per generation          6.4s  (8% of wall clock)
+  threads 2:
+    generation total (no eval)            82.2s
+    GPU-bound fraction                   92.8%
+    driver seconds per generation          5.9s  (7% of wall clock)
+  threads 4:
+    generation total (no eval)            82.4s
+    GPU-bound fraction                   92.6%
+    driver seconds per generation          6.1s  (7% of wall clock)
+
+Alternating A-B-A-B and sequential, as in compile_ab.sh: a laptop warms
+over an hour, and running the arms concurrently would halve both.
+  threads-1-1    90.8s/gen over 3 clean gens, mean_plies 130.4
+  threads-4-1    85.8s/gen over 3 clean gens, mean_plies 130.4
+  threads-1-2    79.5s/gen over 3 clean gens, mean_plies 130.4
+  threads-4-2    83.8s/gen over 3 clean gens, mean_plies 130.4
+
+  1 thread   85.2s/gen   4 threads   84.8s/gen   speedup 1.00x
+  long-oct ran at 97.0s/gen on this machine with compile on.
+  Jupiter is ~90% GPU, so a small number here is EXPECTED and is not
+  the case for the change. Read phase 2's driver seconds instead:
+  that is what a rented 4090 would pay, where the split is 58/42.
+load at end: 1.96 1.84 1.75
+=== COMPLETE Mon Oct 26 20:06:50 CET 2026 ===

@@ -52,7 +52,7 @@ if (( ${LOAD1%.*} > 2 )); then
 fi
 
 print "" | tee -a $L
-print "--- phase 1: driver ceiling, network excluded ---" | tee -a $L
+print -r -- "--- phase 1: driver ceiling, network excluded ---" | tee -a $L
 print "drivercost feeds an instant evaluator, so this is the driver alone." | tee -a $L
 nice -n 5 cargo build --release -p az-core --bin drivercost 2>&1 | tail -1 | tee -a $L
 for t in ${=SWEEP}; do
@@ -82,7 +82,7 @@ if rates:
 PY
 
 print "" | tee -a $L
-print "--- phase 2: driver seconds per generation ---" | tee -a $L
+print -r -- "--- phase 2: driver seconds per generation ---" | tee -a $L
 print "No torch.compile here on purpose: generation_profile feeds a VARIABLE" | tee -a $L
 print "batch size and compile would recompile for every shape. Compile only" | tee -a $L
 print "touches the GPU half anyway, and phase 3 measures it with bucketing on." | tee -a $L
@@ -95,7 +95,7 @@ for t in 1 2 $ARM_B; do
 done
 
 print "" | tee -a $L
-print "--- phase 3: real s/gen, compile on, alternating blocks ---" | tee -a $L
+print -r -- "--- phase 3: real s/gen, compile on, alternating blocks ---" | tee -a $L
 print "Alternating A-B-A-B and sequential, as in compile_ab.sh: a laptop warms" | tee -a $L
 print "over an hour, and running the arms concurrently would halve both." | tee -a $L
 
@@ -144,7 +144,9 @@ for ln in open(log):
 if a and b:
     x, y = sum(a)/len(a), sum(b)/len(b)
     print(f"  1 thread {x:6.1f}s/gen   {armb} threads {y:6.1f}s/gen   speedup {x/y:.2f}x")
-    print(f"  long-oct ran at 97.0s/gen on this machine with compile on.")
+    print(f"  Do NOT compare this to long-oct's 97.0s/gen: every generation there")
+    print(f"  has evaluated:true, so 97.0 includes a ~12s probe suite that these")
+    print(f"  blocks exclude by design. The 1-thread arm above is the control.")
     print(f"  Jupiter is ~90% GPU, so a small number here is EXPECTED and is not")
     print(f"  the case for the change. Read phase 2's driver seconds instead:")
     print(f"  that is what a rented 4090 would pay, where the split is 58/42.")

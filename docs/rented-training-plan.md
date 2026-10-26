@@ -35,8 +35,11 @@ Two facts fall out, and they point in opposite directions:
   single-threaded, and rayon was tried the same day (`86b661a`, reverted in
   `2131d58`) and measured slower — 4.8 s → 5.4 s at 4 threads, because a call
   carries ~5 ms of work across at most 256 slots. That measurement was taken at
-  *slot* granularity; a game-granularity driver is now in the tree
-  (`bench/driver_threads.sh`) and its result replaces the 18.7 s below.
+  *slot* granularity; a game-granularity driver was then built and **measured on
+  2026-10-26, and it does not pay** — 1.27× on the driver in isolation, and
+  +0.5% ± 9.8% on a real generation, i.e. nothing. The 18.7 s below therefore
+  **stands**, as a single-threaded figure.
+  See [the write-up](../bench/results/2026-10-26-driver-threads.md).
 
 `2131d58` drew the conclusion itself: *"the driver is 32% of wall clock on a
 fast GPU and single-threaded, which caps even a 10x card at 2.5x."*
@@ -118,6 +121,13 @@ What does *not* move is the thing that matters most:
 > 18.7 s of 33.1 s. At the H100's bf16 row, 18.7 s of 20.4 s — the card finishes
 > its share in 1.7 s and waits. Every precision win makes this worse, not
 > better.
+
+And as of 2026-10-26 **there is no longer a plan to fix it.** Threading the
+driver by game was built, tested and measured, and bought +0.5% ± 9.8% on a real
+generation. Its isolated ceiling is 1.27×, which would take 18.7 s to 14.7 s —
+12% off a 4090 generation, not the 2× the split invites — and even that 1.27×
+evaporated as soon as a real evaluator was attached. Rent on the assumption of a
+single-threaded driver.
 
 ### How confident is this
 
@@ -210,23 +220,28 @@ different training run, and may not be quoted.
 
 **Worth renting if**, at the long run's settings:
 
-* generations/hour ≥ **3.0×** Jupiter's 37.1, i.e. ≥ 111 gens/h, **and**
+* generations/hour ≥ **3.0×** Jupiter's 42.3, i.e. ≥ 127 gens/h
+  (≤ 28.4 s/generation), **and**
 * GPU-bound fraction ≥ **65%** (the GPU is the thing being paid for), **and**
 * sustained egress to Jupiter ≥ **10 Mbps** (52 GB of checkpoints from a
   10,000-generation run at `--keep-every 25` needs ~12 h at that rate).
 
 **Kills the idea if:**
 
-* generations/hour < **2.0×** Jupiter. Below that the money buys a long
-  weekend's wait, not a different class of experiment.
-* GPU-bound fraction < **50%**, *measured with driver threading already on*.
-  Then we are renting a GPU to watch it idle. This criterion was written when
-  the next move would have been to parallelise the driver at game granularity;
-  that is now done, so a failure here means the threading did not deliver on a
-  rented core and the box is the wrong shape.
+* generations/hour < **2.0×** Jupiter, i.e. < 85 gens/h (≥ 42.6 s/generation).
+  Below that the money buys a long weekend's wait, not a different class of
+  experiment.
+* GPU-bound fraction < **50%**. Then we are renting a GPU to watch it idle.
+  This criterion used to add *"measured with driver threading already on"*,
+  written when parallelising the driver was still the next move. It was done,
+  measured on 2026-10-26, and bought nothing, so the qualifier is withdrawn:
+  there is no second attempt held in reserve behind a failure here. A box under
+  50% is simply the wrong shape.
 * egress < 5 Mbps. The results cannot come home.
-* `drivercost` single-thread < **120,000 evals/s** (under 0.4× Jupiter). The
-  box's core is too slow for the driver no matter what card is bolted to it.
+* `drivercost` single-thread < **126,000 evals/s** (0.4× Jupiter's measured
+  314,542 on 2026-10-26; the threshold was 120,000 against the older 292,646).
+  The box's core is too slow for the driver no matter what card is bolted to it
+  — and since threading does not rescue it, this one is now load-bearing.
 
 Note the asymmetry: two of the four kill criteria point at *our code* rather
 than at the hardware. That is the honest reading of the measurements we have.
@@ -291,6 +306,17 @@ of 4.1–4.6× if the datacentre card turns out to be reachable:
 | $/h assumed | — | $0.50 | $0.50 | $1.50 |
 | cost of 72 h | ~0 | ~$36 | ~$36 | ~$108 |
 | wall clock for 2,601 gens | 72 h | **26 h** | **20 h** | **17 h** |
+
+**Jupiter's 37.1 is a with-probes figure and the rented columns are not** —
+corrected 2026-10-26. `long-oct` evaluated every generation (`evaluated: true`
+on all 2,602), so its 97.0 s carries ~12 s of `vs_prev` / `vs_random` / `mate` /
+`defend` / `tactics` / `material` that the roofline estimates to its right do not
+include. Like for like, Jupiter is 85.2 s/generation and 42.3 gens/h. The
+multipliers in the headers are unchanged — they come from the GPU/driver split,
+which was always probe-free — so this table reads about 14% too kind to the
+rented columns. A long rented run should evaluate at `--eval-every 25` rather
+than every generation anyway, which is the configuration that makes the
+probe-free comparison the right one.
 
 The H100 column buys 9 hours over the slow 4090 for three times the money, and
 most of what it is paid for is a card waiting on one CPU core. It is worth an
@@ -421,6 +447,24 @@ was true and used in one where it was not. Here the context was not a date but a
 appear in the commit message at all. Hence §1.7, which prints the flags torch
 reports back rather than the ones that were asked for.
 
+**A third correction, 2026-10-26, and it is the same error a fourth time.**
+This document declared its thresholds against *"Jupiter's 97.0 s/generation,
+37.1 generations/hour"*, and `bench/vast_deploy.sh` restated them. But 97.0 s
+comes from `runs/long-oct`, where **every one of the 2,602 generations carries
+`evaluated: true`** — it includes a ~12 s probe suite. The rented box is
+measured with `generation_profile.py`, which reports `generation total (no
+eval)`. A no-probe number was being read against a with-probe baseline, which
+flattered every candidate by ~14% — enough to flip a verdict, since 45
+s/generation is 2.16× against 97.0 and survives, 1.89× against 85.2 and is
+killed.
+
+Like for like, Jupiter is **85.2 s/generation, 42.3 gens/h**, measured
+2026-10-26 by `bench/driver_threads.sh`. The thresholds above have moved with
+it. This one was not caught by review — it surfaced only because the threading
+benchmark alternated arms and so measured its own single-threaded baseline
+instead of trusting the recorded one. Had it used 97.0 as the control, it would
+have reported a 13% speedup for a change that does nothing.
+
 ## Honest summary
 
 The measurement session is cheap and worth doing, and it now has a second
@@ -442,16 +486,23 @@ every row in the table**, and every precision win makes that worse rather than
 better: an H100 running bf16 would spend 92% of the rental waiting on one CPU
 core doing tree descent. So the order is:
 
-1. **Game-granularity driver threading.** Done and in the tree — shard the games
-   across K threads, each owning whole games, its own trees and its own rows of
-   the batch. Reproducible at any K by construction, and measured by
-   `bench/driver_threads.sh`. Jupiter is ~90% GPU so the gain *here* is small by
-   design; the number that transfers is driver seconds per generation.
-2. **Then the measurement session**, with the new driver cost substituted into
-   the tables above.
+1. ~~**Game-granularity driver threading.**~~ **Done, measured 2026-10-26, and
+   it does not pay.** The implementation is sound — slots sharded across K
+   threads, each owning whole games, reproducible ply-for-ply at any K by
+   construction — and it still bought +0.5% ± 9.8% on a real generation. Driver
+   seconds per generation, the number that transfers, went 6.4 → 5.9 → 6.1 s at
+   1/2/4 threads: flat. The isolated ceiling is 1.27× at 4 threads, and 8
+   threads is *worse* than 4. Full numbers:
+   [`2026-10-26-driver-threads.md`](../bench/results/2026-10-26-driver-threads.md).
+2. **The measurement session**, with the driver assumed single-threaded and
+   18.7 s left standing in the tables above.
 3. **Then, and only then, a decision about renting.**
 
-Renting first would have been paying to discover step 1.
+Step 1 was still worth doing first, and not for the reason expected. It cost one
+evening on hardware already owned and it closed the question — the alternative
+was renting a box to discover that 53–92% of the rental is a CPU core that
+cannot be parallelised away. It also produced the corrected 85.2 s baseline,
+which was worth more than the threading would have been.
 
 ### Sources for the hardware figures (2026-10-26)
 
