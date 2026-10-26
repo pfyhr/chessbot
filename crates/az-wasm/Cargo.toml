@@ -1,0 +1,13 @@
+[package]
+name = "az-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "C-ABI wasm wrapper around the chess core, for the browser build"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+az-core = { path = "../az-core" }
+shakmaty = "0.30"

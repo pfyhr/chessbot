@@ -1,0 +1,12 @@
+{
+  "name": "chessbot-web",
+  "private": true,
+  "type": "module",
+  "description": "Browser build: the trained net plus the same Gumbel MCTS, client-side",
+  "scripts": {
+    "parity": "node tools/parity_check.mjs"
+  },
+  "devDependencies": {
+    "onnxruntime-web": "1.23.0"
+  }
+}

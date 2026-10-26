@@ -37,6 +37,23 @@ tests/             cross-language checks against python-chess
 bench/results      committed benchmark results and the decisions they drove
 ```
 
+## Play it in a browser
+
+<https://pfyhr.github.io/chessbot/> — `long-oct/gen2600`, client-side, no server.
+
+The page is not a reimplementation. `crates/az-wasm` compiles the same `az-core`
+the trainer uses to `wasm32-unknown-unknown`, so the browser's search, position
+encoding and move generation are the ones training ran on; only the network
+evaluation is different, as ONNX Runtime Web instead of PyTorch. `az-core`'s
+MCTS was already resumable -- that is how self-play batches leaf evaluations --
+which is exactly the shape an asynchronous evaluator needs.
+
+Porting an encoding fails silently, so the deploy is gated on reproducing the
+trainer exactly: FEN, legal move order, every policy index and a hash of the raw
+observation bytes over 127 positions, plus fixed-seed searches that must choose
+the same move. See [`web/README.md`](web/README.md) and
+[`bench/results/2026-10-26-browser-build-parity.md`](bench/results/2026-10-26-browser-build-parity.md).
+
 ## Playing against a generation
 
 Every generation is a saved checkpoint, so "how good was it after N generations?" is a

@@ -41,6 +41,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "az-wasm"
+version = "0.1.0"
+dependencies = [
+ "az-core",
+ "shakmaty",
+]
+
+[[package]]
 name = "bitflags"
 version = "2.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

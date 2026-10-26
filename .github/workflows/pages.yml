@@ -1,0 +1,95 @@
+# Build the browser build and publish it to GitHub Pages.
+#
+# The deploy is gated on parity: the site is only published if the wasm search
+# reproduces the trainer's encoding and move indexing exactly, and a fixed-seed
+# search picks the same moves. That gate is the whole reason this workflow is
+# not three lines of "copy some files" -- a browser port of a search and an
+# encoding fails silently, and a page that quietly plays a different network is
+# worse than no page.
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths: ['web/**', 'crates/**', '.github/workflows/pages.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let a running deploy finish rather than cancelling it half-published.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  # Where the exported network lives. It is a release asset rather than a file
+  # in the repo: 22 MB of weights in git history is 22 MB forever, and this way
+  # the published weights have a version and a changelog of their own.
+  MODEL_RELEASE: weights-gen2600
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust with the wasm target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+        working-directory: web
+
+      - name: Fetch the exported network
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p web/dist/model
+          gh release download "$MODEL_RELEASE" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'gen2600.onnx' --pattern 'manifest.json' --pattern 'selfcheck.json' \
+            --dir web/dist/model
+          ls -la web/dist/model
+
+      - name: Build
+        run: SKIP_MODEL=1 ./build.sh
+        working-directory: web
+
+      # The gate. Both of these exit non-zero on a mismatch, which fails the
+      # job before anything reaches Pages.
+      - name: Parity against the trainer
+        run: node tools/parity_check.mjs
+        working-directory: web
+
+      - name: Smoke-test the shipped module
+        run: node tools/smoke.mjs
+        working-directory: web
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

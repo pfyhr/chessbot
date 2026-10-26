@@ -43,3 +43,10 @@ bench/scratch/
 
 # Third-party papers are linked in papers/README.md, not redistributed.
 papers/*.pdf
+
+# Browser build. `web/dist` is assembled by web/build.sh and `node_modules` by
+# npm; both are reproducible. `web/parity/reference.json` is NOT ignored -- it
+# is the committed record of what the trainer computes, and CI has no PyTorch
+# to regenerate it with.
+web/node_modules/
+web/dist/

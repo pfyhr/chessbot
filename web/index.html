@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>chessbot</title>
+<meta name="description" content="Play a chess network trained from zero self-play. Runs entirely in your browser.">
+<link rel="stylesheet" href="src/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>%E2%99%9E</text></svg>">
+</head>
+<body>
+
+<header>
+  <h1>chessbot</h1>
+  <p class="sub">
+    An AlphaZero-style network trained from zero — no openings, no endgame tables,
+    no human games. It runs entirely in this tab: the weights and the search both
+    download once and nothing is sent anywhere.
+  </p>
+</header>
+
+<div id="loading">
+  <p id="status">Starting…</p>
+  <div class="progress"><div id="bar"></div></div>
+  <p class="dim small">First visit downloads about 25about 30&nbsp;MB of network and runtimenbsp;MB of network and runtime. It is cached afterwards.</p>
+</div>
+
+<main id="app" class="hidden">
+  <div class="left">
+    <div id="board"></div>
+  </div>
+
+  <div class="right">
+    <p id="warn" class="warn hidden"></p>
+
+    <section>
+      <div class="row">
+        <button id="newgame">New game</button>
+        <button id="undo">Take back</button>
+        <button id="flip">Flip board</button>
+      </div>
+
+      <div class="row">
+        <span class="label">You play</span>
+        <label><input type="radio" name="side" value="white" checked> White</label>
+        <label><input type="radio" name="side" value="black"> Black</label>
+      </div>
+
+      <div class="row stack">
+        <label for="sims" class="label">Search budget — <span id="simval"></span></label>
+        <input type="range" id="sims" min="0" max="8" step="1">
+        <p class="dim small">
+          The network was trained at 32 simulations. More search makes it
+          stronger and slower; <em>raw policy</em> turns search off entirely and
+          plays the network's first instinct.
+        </p>
+      </div>
+    </section>
+
+    <section>
+      <h2>Evaluation</h2>
+      <p id="eval" class="eval">—</p>
+      <ol id="lines" class="lines"></ol>
+      <p class="dim small">
+        Percentages are the search's improved policy; <em>prior</em> is what the
+        network thought before searching. The gap between them is how much the
+        search disagreed.
+      </p>
+    </section>
+
+    <section>
+      <h2>Moves</h2>
+      <div id="moves" class="moves"></div>
+    </section>
+
+    <p class="dim small" id="netinfo"></p>
+  </div>
+</main>
+
+<footer>
+  <p class="dim small">
+    <a href="https://github.com/pfyhr/chessbot">Source and training write-ups</a>
+    · Gumbel MCTS after Danihelka et al., <em>Policy improvement by planning with
+    Gumbel</em> (ICLR 2022)
+    · the same search and position encoding as training, compiled to WebAssembly
+  </p>
+</footer>
+
+<script type="module" src="src/app.js"></script>
+</body>
+</html>

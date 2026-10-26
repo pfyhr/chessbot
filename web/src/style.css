@@ -1,0 +1,160 @@
+/* Dark by default, because this is a board and a board wants contrast. */
+:root {
+  --bg: #15171a;
+  --panel: #1d2024;
+  --line: #2c3036;
+  --fg: #e7e9ec;
+  --dim: #9aa3ad;
+  --accent: #7fb2e5;
+  --light: #b8a88f;
+  --dark: #6d5c47;
+  --last: #b9a23f;
+  --check: #c2503f;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 24px 16px 48px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+header, main, footer { max-width: 1080px; margin: 0 auto; }
+h1 { font-size: 1.6rem; margin: 0 0 4px; letter-spacing: -0.01em; }
+h2 { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em;
+     color: var(--dim); margin: 0 0 8px; font-weight: 600; }
+.sub { color: var(--dim); margin: 0 0 24px; max-width: 62ch; }
+.dim { color: var(--dim); }
+.small { font-size: 0.85rem; }
+.hidden { display: none !important; }
+a { color: var(--accent); }
+
+/* --- layout ------------------------------------------------------------- */
+
+main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 28px; align-items: start; }
+.right { display: flex; flex-direction: column; gap: 20px; }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+.row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.row:last-child { margin-bottom: 0; }
+.row.stack { flex-direction: column; align-items: stretch; gap: 6px; }
+.label { color: var(--dim); font-size: 0.85rem; }
+
+@media (max-width: 860px) {
+  main { grid-template-columns: minmax(0, 1fr); }
+  .left { max-width: 560px; margin: 0 auto; width: 100%; }
+}
+
+/* --- board -------------------------------------------------------------- */
+
+.board {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  aspect-ratio: 1;
+  width: 100%;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  touch-action: none;       /* or a drag scrolls the page on a phone */
+  user-select: none;
+}
+/* Flipping by rotating the grid and counter-rotating the pieces keeps one
+   source of truth for square order -- the DOM stays in a1..h8 either way. */
+.board.flipped { transform: rotate(180deg); }
+.board.flipped .piece, .board.flipped .promo { transform: rotate(180deg); }
+
+.sq { position: relative; display: grid; place-items: center; }
+.sq.light { background: var(--light); }
+.sq.dark  { background: var(--dark); }
+.sq.last::after {
+  content: ""; position: absolute; inset: 0;
+  background: var(--last); opacity: 0.32; pointer-events: none;
+}
+.sq.sel::after {
+  content: ""; position: absolute; inset: 0;
+  background: var(--accent); opacity: 0.3; pointer-events: none;
+}
+.sq.check { background: radial-gradient(circle, var(--check) 0%, transparent 72%), var(--dark); }
+
+.piece {
+  font-size: min(8.4vw, 3.3rem);
+  line-height: 1;
+  cursor: default;
+  pointer-events: none;
+  position: relative;
+  z-index: 1;
+}
+/* Both colours use the solid glyph; white is the same shape inverted, which is
+   the only way to get two sets that genuinely match across platforms. */
+.piece.white { color: #f6f3ee; -webkit-text-stroke: 1.4px #1b1b1b; text-shadow: 0 1px 2px rgba(0,0,0,.45); }
+.piece.black { color: #17191c; -webkit-text-stroke: 1.1px #cfc6b8; text-shadow: 0 1px 2px rgba(0,0,0,.35); }
+.piece.movable { cursor: grab; }
+.piece.dragging { opacity: 0.28; }
+.piece.ghost {
+  position: fixed; z-index: 99; pointer-events: none;
+  transform: translate(-50%, -50%); display: grid; place-items: center;
+}
+
+.dot, .capture { position: absolute; pointer-events: none; z-index: 2; }
+.dot { width: 26%; height: 26%; border-radius: 50%; background: rgba(20,20,20,.38); }
+.capture { inset: 6%; border-radius: 50%; border: 4px solid rgba(20,20,20,.34); }
+
+.promo {
+  position: absolute; z-index: 10; inset: 0; width: 100%;
+  display: grid; grid-template-columns: repeat(2, 1fr);
+  background: var(--panel); border: 1px solid var(--accent); border-radius: 6px;
+}
+.promo button {
+  all: unset; display: grid; place-items: center; cursor: pointer;
+  font-size: min(4vw, 1.5rem); padding: 2px;
+}
+.promo button:hover { background: rgba(127,178,229,.22); }
+
+/* --- controls ----------------------------------------------------------- */
+
+button {
+  background: #262a30; color: var(--fg);
+  border: 1px solid var(--line); border-radius: 7px;
+  padding: 7px 13px; font: inherit; font-size: 0.9rem; cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+button:disabled { opacity: 0.4; cursor: default; }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+label { display: inline-flex; align-items: center; gap: 5px; font-size: 0.9rem; }
+
+/* --- readouts ----------------------------------------------------------- */
+
+.eval { margin: 0 0 10px; font-variant-numeric: tabular-nums; font-size: 0.95rem; }
+.lines { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.lines li {
+  display: grid; grid-template-columns: 4.2em 1fr 3.4em; gap: 8px;
+  align-items: center; font-size: 0.85rem; font-variant-numeric: tabular-nums;
+}
+.lines b { font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.lines .bar { background: #2b3038; height: 7px; border-radius: 4px; overflow: hidden; }
+.lines .bar i { display: block; height: 100%; background: var(--accent); }
+.lines .n { text-align: right; color: var(--dim); }
+.lines .dim { grid-column: 1 / -1; font-size: 0.76rem; margin-top: -3px; }
+
+.moves {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82rem; line-height: 1.8;
+  max-height: 150px; overflow-y: auto; color: var(--fg);
+}
+.moves .num { color: var(--dim); }
+
+.warn {
+  background: #3a2a1c; border: 1px solid #7a5a2a; color: #f0d9a8;
+  padding: 9px 12px; border-radius: 8px; margin: 0; font-size: 0.85rem;
+}
+
+/* --- loading ------------------------------------------------------------ */
+
+#loading { max-width: 1080px; margin: 0 auto; }
+.progress { background: var(--panel); border: 1px solid var(--line);
+            border-radius: 6px; height: 8px; overflow: hidden; margin: 10px 0; max-width: 420px; }
+#bar { height: 100%; width: 0; background: var(--accent); transition: width .15s linear; }
+
+footer { margin-top: 36px; border-top: 1px solid var(--line); padding-top: 14px; }
