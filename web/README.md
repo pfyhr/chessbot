@@ -109,6 +109,26 @@ not still showing the previous search's candidates. Games are loaded through
 `?moves=`, a real feature rather than a test hook, so the test takes the path a
 visitor takes.
 
+### The promotion picker, and why pixels
+
+Four choices used to be a 2x2 grid inside the single promotion square, making
+each glyph a quarter of a square. At that size a fixed 1.3px centred outline is
+~6% of the glyph and eats the fill, so **white** pieces rendered as dark blobs
+on a dark panel. Every computed style was correct the whole time -- the right
+colour, the right font size -- which is why the gate reads pixels: it decodes
+Playwright's screenshots with `node:zlib` and asserts the piece's own tone
+dominates its cell.
+
+That gate then caught something a single engine would not have: WebKit draws
+`-webkit-text-stroke` far heavier than Chromium. The same declaration gave 0.5%
+dark pixels in one and 4.0% in the other, and the queen -- the thinnest-stroked
+glyph -- tipped over. Both colours now use an eight-direction shadow ring sized
+in `em`, which sits outside the glyph instead of eating into it and renders the
+same in both engines.
+
+The rule that came out of it: **outline widths in `em`, never `px`.** A width
+that is 2% of an 88px board glyph is 6% of a 22px one.
+
 ### Why the GPU is opt-in
 
 `?backend=webgpu` asks for it; the default is the wasm kernels. That is the

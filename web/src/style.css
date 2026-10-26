@@ -60,6 +60,7 @@ section { background: var(--panel); border: 1px solid var(--line); border-radius
   grid-template-rows: repeat(8, 1fr);
   aspect-ratio: 1;
   width: 100%;
+  position: relative;      /* the promotion strip is placed against this */
   border-radius: 8px;
   overflow: hidden;
   border: 1px solid var(--line);
@@ -69,7 +70,11 @@ section { background: var(--panel); border: 1px solid var(--line); border-radius
 /* Flipping by rotating the grid and counter-rotating the pieces keeps one
    source of truth for square order -- the DOM stays in a1..h8 either way. */
 .board.flipped { transform: rotate(180deg); }
-.board.flipped .piece, .board.flipped .promo { transform: rotate(180deg); }
+/* Only the glyphs counter-rotate. The promotion strip is a child of the board
+   and is placed in board coordinates, so the board's own rotation already puts
+   it on the right square; rotating the strip as well would spin it about its
+   own centre and reverse the order of the four choices. */
+.board.flipped .piece { transform: rotate(180deg); }
 
 /* `min-*: 0` so an oversized glyph can never push a track past its 1fr share;
    grid items default to `min-width: auto`, which is their content size. */
@@ -101,7 +106,30 @@ section { background: var(--panel); border: 1px solid var(--line); border-radius
 }
 /* Both colours use the solid glyph; white is the same shape inverted, which is
    the only way to get two sets that genuinely match across platforms. */
-.piece.white { color: #f7f4ef; -webkit-text-stroke: 1.3px #15171a; text-shadow: 0 1px 2px rgba(0,0,0,.45); }
+/* Outline widths in `em`, never px. A fixed 1.3px stroke is 2% of an 88px
+   board glyph but 6% of a 22px one, and at 6% a centred stroke eats most of a
+   thin-stroked queen -- which is how WHITE pieces came to render black in the
+   promotion picker while looking correct on the board. */
+.piece {
+  /* An eight-direction ring of hard shadows, sized in `em`. Two reasons it is
+     not `-webkit-text-stroke`: the stroke is centred on the glyph outline, so
+     half of it eats the fill and a thin-stroked queen turns into a blob at
+     small sizes; and WebKit draws it far heavier than Chromium does -- the
+     same declaration gave 0.5% dark pixels in one engine and 4.0% in the
+     other, which is the difference between a white queen and a black one. A
+     shadow ring sits entirely outside the glyph and renders the same in both. */
+  --rim: 0.021em;
+}
+.piece.white {
+  color: #f7f4ef;
+  text-shadow:
+    var(--rim) 0 0 #15171a, calc(-1 * var(--rim)) 0 0 #15171a,
+    0 var(--rim) 0 #15171a, 0 calc(-1 * var(--rim)) 0 #15171a,
+    var(--rim) var(--rim) 0 #15171a, calc(-1 * var(--rim)) var(--rim) 0 #15171a,
+    var(--rim) calc(-1 * var(--rim)) 0 #15171a,
+    calc(-1 * var(--rim)) calc(-1 * var(--rim)) 0 #15171a,
+    0 0.016em 0.03em rgba(0, 0, 0, .45);
+}
 /* A light halo rather than a light stroke. `-webkit-text-stroke` is centred on
    the glyph outline, so half of it eats inward -- on the thin-stroked pieces
    (rook, knight, bishop, queen) a 1.1px light stroke swallowed the black fill
@@ -110,8 +138,12 @@ section { background: var(--panel); border: 1px solid var(--line); border-radius
 .piece.black {
   color: #101216;
   text-shadow:
-    0 0 1px rgba(236, 230, 220, .95), 0 0 2px rgba(236, 230, 220, .85),
-    0 1px 2px rgba(0, 0, 0, .5);
+    var(--rim) 0 0 #ece6dc, calc(-1 * var(--rim)) 0 0 #ece6dc,
+    0 var(--rim) 0 #ece6dc, 0 calc(-1 * var(--rim)) 0 #ece6dc,
+    var(--rim) var(--rim) 0 #ece6dc, calc(-1 * var(--rim)) var(--rim) 0 #ece6dc,
+    var(--rim) calc(-1 * var(--rim)) 0 #ece6dc,
+    calc(-1 * var(--rim)) calc(-1 * var(--rim)) 0 #ece6dc,
+    0 0.016em 0.03em rgba(0, 0, 0, .5);
 }
 .piece.movable { cursor: grab; }
 .piece.dragging { opacity: 0.28; }
@@ -124,9 +156,9 @@ section { background: var(--panel); border: 1px solid var(--line); border-radius
    own dimensions cannot depend on its contents, so the glyph is free to be as
    large as it likes without ever feeding back into the track height. */
 @supports (container-type: size) {
+  /* The picker cells are square-sized, so a piece in one uses the same rule. */
   .sq { container-type: size; }
   .piece { font-size: 78cqmin; }
-  .promo button { font-size: 34cqmin; }
 }
 
 /* File letters along the bottom rank, rank numbers up the left file. Drawn
@@ -146,16 +178,32 @@ section { background: var(--panel); border: 1px solid var(--line); border-radius
 .dot { width: 26%; height: 26%; border-radius: 50%; background: rgba(20,20,20,.38); }
 .capture { inset: 6%; border-radius: 50%; border: 4px solid rgba(20,20,20,.34); }
 
+/* Four FULL squares down the file, not a 2x2 grid inside one square. The old
+   layout made each glyph a quarter of a square -- too small to identify, and
+   small enough that a fixed-width outline swallowed the fill. Square-coloured
+   rather than panel-coloured, because a white piece on a near-black panel was
+   the other half of why these read as black pieces. */
 .promo {
-  position: absolute; z-index: 10; inset: 0; width: 100%;
-  display: grid; grid-template-columns: repeat(2, 1fr);
-  background: var(--panel); border: 1px solid var(--accent); border-radius: 6px;
+  position: absolute; z-index: 10;
+  width: 12.5%; height: 50%;
+  display: grid; grid-template-rows: repeat(4, 1fr);
+  box-shadow: 0 0 0 2px var(--accent), 0 6px 18px rgba(0, 0, 0, .55);
 }
-.promo button {
-  all: unset; display: grid; place-items: center; cursor: pointer;
-  font-size: min(4vw, 1.5rem); padding: 2px;
+.promo-cell {
+  all: unset;
+  /* AFTER `all: unset`, which resets `container-type` along with everything
+     else. Declared in the @supports block above it, the reset won on source
+     order and `cqmin` silently fell back to viewport units -- a 780px glyph in
+     an 89px cell. A container query unit with no container does not error, it
+     just measures the wrong thing. */
+  container-type: size;
+  display: grid; place-items: center;
+  cursor: pointer;
+  min-width: 0; min-height: 0;
 }
-.promo button:hover { background: rgba(127,178,229,.22); }
+.promo-cell.light { background: #d6c9b0; }
+.promo-cell.dark  { background: #8d7a60; }
+.promo-cell:hover { background: var(--accent); }
 
 /* --- controls ----------------------------------------------------------- */
 

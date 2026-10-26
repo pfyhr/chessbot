@@ -15,6 +15,7 @@
 // self-check passing, none of which the Node gates exercise.
 
 import { createServer } from "node:http";
+import zlib from "node:zlib";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -54,6 +55,15 @@ const MATES = [
 // Phone, small tablet, and the two-column desktop layout -- the last is where
 // the shipped bug was worst, because the board is one column of a grid there
 // and a viewport-relative glyph size has nothing to do with the board's width.
+// Promotion positions, both colours, each reached by a legal line so the page
+// gets there the same way a player would.
+const PROMOTIONS = [
+  { side: "white", from: "a7", to: "b8", order: ["q", "r", "b", "n"],
+    moves: "a2a4,b7b5,a4b5,g8f6,b5b6,f6g8,b6a7,g8f6" },
+  { side: "black", from: "g2", to: "f1", order: ["n", "b", "r", "q"],
+    moves: "g1f3,h7h5,f3g1,h5h4,g1f3,h4h3,f3g1,h3g2,e2e4" },
+];
+
 const VIEWPORTS = [
   { name: "phone",   width: 390,  height: 844 },
   { name: "tablet",  width: 820,  height: 1180 },
@@ -67,6 +77,71 @@ let failures = 0;
 let engineName = "";
 const fail = (m) => { failures++; console.log(`  FAIL  [${engineName}] ${m}`); };
 const near = (a, b) => Math.abs(a - b) <= TOL;
+
+/**
+ * Minimal PNG reader for Playwright's 8-bit screenshots.
+ *
+ * Enough to count pixels, which is the only way to answer "does this piece
+ * read as white". Computed styles cannot: the promotion glyphs had the right
+ * colour and the right size in the CSSOM while rendering as dark blobs,
+ * because a centred outline was eating the fill.
+ */
+function decodePng(buf) {
+  let pos = 8, w = 0, h = 0, depth = 0, colour = 0;
+  const idat = [];
+  while (pos + 8 <= buf.length) {
+    const len = buf.readUInt32BE(pos);
+    const type = buf.toString("ascii", pos + 4, pos + 8);
+    const data = buf.subarray(pos + 8, pos + 8 + len);
+    if (type === "IHDR") {
+      w = data.readUInt32BE(0); h = data.readUInt32BE(4);
+      depth = data[8]; colour = data[9];
+    } else if (type === "IDAT") idat.push(data);
+    else if (type === "IEND") break;
+    pos += 12 + len;
+  }
+  if (depth !== 8 || (colour !== 6 && colour !== 2)) {
+    throw new Error(`unsupported PNG: depth ${depth}, colour type ${colour}`);
+  }
+  const ch = colour === 6 ? 4 : 3;
+  const raw = zlib.inflateSync(Buffer.concat(idat));
+  const stride = w * ch;
+  const out = Buffer.alloc(h * stride);
+  let p = 0;
+  for (let y = 0; y < h; y++) {
+    const filter = raw[p++];
+    const line = raw.subarray(p, p + stride); p += stride;
+    const cur = out.subarray(y * stride, (y + 1) * stride);
+    const prev = y ? out.subarray((y - 1) * stride, y * stride) : null;
+    for (let i = 0; i < stride; i++) {
+      const a = i >= ch ? cur[i - ch] : 0;
+      const b = prev ? prev[i] : 0;
+      const c = prev && i >= ch ? prev[i - ch] : 0;
+      let v = line[i];
+      if (filter === 1) v += a;
+      else if (filter === 2) v += b;
+      else if (filter === 3) v += (a + b) >> 1;
+      else if (filter === 4) {
+        const pa = Math.abs(b - c), pb = Math.abs(a - c), pc = Math.abs(a + b - 2 * c);
+        v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+      } else if (filter !== 0) throw new Error(`bad PNG filter ${filter}`);
+      cur[i] = v & 0xff;
+    }
+  }
+  return { w, h, ch, data: out };
+}
+
+/** Fraction of near-white and near-black pixels. */
+function tones(png) {
+  let light = 0, dark = 0, n = 0;
+  for (let i = 0; i < png.data.length; i += png.ch) {
+    const lum = 0.2126 * png.data[i] + 0.7152 * png.data[i + 1] + 0.0722 * png.data[i + 2];
+    if (lum > 220) light++;
+    else if (lum < 60) dark++;
+    n++;
+  }
+  return { light: light / n, dark: dark / n };
+}
 
 const server = createServer(async (req, res) => {
   const rel = decodeURIComponent(req.url.split("?")[0]).replace(/^\/+/, "") || "index.html";
@@ -157,6 +232,80 @@ for (const vp of VIEWPORTS) {
   if (m.warned) fail(`${vp.name}: page raised a warning: ${m.warned}`);
   if (errors.length) fail(`${vp.name}: console errors: ${errors.slice(0, 3).join(" | ")}`);
   if (vp.name === "desktop") console.log(`  net      ${m.backend}`);
+  console.log("");
+  await page.close();
+}
+
+// --- the promotion picker ------------------------------------------------
+//
+// Four choices used to be a 2x2 grid inside the single promotion square, so
+// each glyph was a quarter of a square. At that size a fixed 1.3px centred
+// outline is ~6% of the glyph and eats the fill, and WHITE pieces rendered as
+// dark blobs on a dark panel. Every computed style was correct throughout, so
+// this has to be judged on pixels.
+for (const promo of PROMOTIONS) {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto(`${base}?moves=${promo.moves}&side=${promo.side}`, { waitUntil: "domcontentloaded" });
+  await page.waitForSelector("#app:not(.hidden)", { timeout: 120_000 });
+  await page.click(`.sq[data-square=${promo.from}]`);
+  await page.click(`.sq[data-square=${promo.to}]`);
+  await page.waitForSelector(".promo", { timeout: 10_000 });
+  // Off the board: a hovered cell is accent-coloured and would be measured.
+  await page.mouse.move(5, 5);
+
+  const geom = await page.evaluate(() => {
+    const m = document.querySelector(".promo");
+    const sq = document.querySelector(".sq").getBoundingClientRect();
+    return {
+      square: { w: sq.width, h: sq.height },
+      cells: [...m.querySelectorAll(".promo-cell")].map((c) => {
+        const r = c.getBoundingClientRect();
+        const g = getComputedStyle(c.querySelector(".piece"));
+        return { role: c.dataset.role, w: r.width, h: r.height,
+                 font: parseFloat(g.fontSize),
+                 stroke: parseFloat(g.webkitTextStrokeWidth) || 0 };
+      }),
+    };
+  });
+
+  console.log(`### promotion: ${promo.side}`);
+  if (geom.cells.length !== 4) fail(`${promo.side} promotion: ${geom.cells.length} choices, expected 4`);
+  if (geom.cells.map((c) => c.role).join("") !== promo.order.join("")) {
+    fail(`${promo.side} promotion: order ${geom.cells.map((c) => c.role).join("")}, ` +
+         `expected ${promo.order.join("")} (queen on the promotion square)`);
+  }
+
+  for (const c of geom.cells) {
+    // Full square-sized, not a quarter of one.
+    if (!near(c.w, geom.square.w) || !near(c.h, geom.square.h)) {
+      fail(`${promo.side} promotion: ${c.role} cell is ${c.w.toFixed(1)}x${c.h.toFixed(1)}, ` +
+           `square is ${geom.square.w.toFixed(1)}x${geom.square.h.toFixed(1)}`);
+    }
+    // The outline must stay a small fraction of the glyph at ANY size. This is
+    // the root cause: a px outline is fine on a board glyph and ruinous on a
+    // small one, so the ratio is what has to hold, not the width.
+    if (c.stroke / c.font > 0.03) {
+      fail(`${promo.side} promotion: ${c.role} outline is ${(c.stroke / c.font * 100).toFixed(1)}% ` +
+           `of the glyph (max 3%)`);
+    }
+  }
+
+  // Pixels: the piece's own colour must dominate its cell.
+  for (const [i, c] of geom.cells.entries()) {
+    const shot = await page.locator(".promo .promo-cell").nth(i).screenshot();
+    const t = tones(decodePng(shot));
+    const ok = promo.side === "white" ? t.light > t.dark : t.dark > t.light;
+    console.log(`  ${c.role}  ${(c.w).toFixed(0)}px  glyph ${c.font.toFixed(0)}px  ` +
+                `light ${(t.light * 100).toFixed(1)}%  dark ${(t.dark * 100).toFixed(1)}%  ` +
+                `${ok ? "ok" : "WRONG TONE"}`);
+    if (!ok) {
+      fail(`${promo.side} promotion: the ${c.role} reads ${promo.side === "white" ? "dark" : "light"} ` +
+           `(light ${(t.light * 100).toFixed(1)}%, dark ${(t.dark * 100).toFixed(1)}%)`);
+    }
+  }
+  if (errors.length) fail(`${promo.side} promotion: console errors: ${errors.slice(0, 2).join(" | ")}`);
   console.log("");
   await page.close();
 }

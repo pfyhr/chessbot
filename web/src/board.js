@@ -82,6 +82,10 @@ export class Board {
   }
 
   render() {
+    // The promotion strip is a child of the board, not of a square, so it
+    // survives the square rebuild below -- but a re-render means the position
+    // moved on and the question is stale.
+    this.root.querySelector(".promo")?.remove();
     for (const [name, sq] of this.squares) {
       sq.className = `sq ${(FILES.indexOf(name[0]) + Number(name[1])) % 2 ? "light" : "dark"}`;
       if (this.lastMove && (name === this.lastMove.slice(0, 2) || name === this.lastMove.slice(2, 4))) {
@@ -189,16 +193,42 @@ export class Board {
    * Promotion is four moves sharing a destination, so the board offers the
    * square once and asks which piece afterwards -- rather than auto-queening,
    * which quietly removes a real choice from the player.
+   *
+   * The choices are laid out as four FULL-SIZE squares running down the file
+   * from the promotion square, the way a chess UI normally does it. They used
+   * to be a 2x2 grid inside the one square, which made each glyph a quarter of
+   * a square: too small to identify, and small enough that a fixed-width
+   * outline swallowed the fill and turned white pieces black.
+   *
+   * It is positioned on the board in percentage units rather than on the
+   * square, so the board's 180-degree flip carries it correctly and only the
+   * glyphs need counter-rotating -- exactly as for the pieces.
    */
   #askPromotion(from, to, color) {
-    const sq = this.squares.get(to);
+    const file = FILES.indexOf(to[0]);
+    const row = 8 - Number(to[1]);          // DOM row: 0 is rank 8
+    // Run down the board if there is room below, otherwise up. Either way the
+    // queen sits on the promotion square itself, where the eye already is.
+    const down = row + 4 <= 8;
+    const roles = down ? ["q", "r", "b", "n"] : ["n", "b", "r", "q"];
+    const top = down ? row : row - 3;
+
     const menu = document.createElement("div");
     menu.className = "promo";
-    for (const role of ["q", "r", "b", "n"]) {
+    menu.style.left = `${file * 12.5}%`;
+    menu.style.top = `${top * 12.5}%`;
+
+    for (const role of roles) {
       const b = document.createElement("button");
-      b.className = `piece ${color}`;
-      b.textContent = GLYPH[role];
-      b.title = { q: "Queen", r: "Rook", b: "Bishop", n: "Knight" }[role];
+      b.className = `promo-cell ${(file + Number(to[1])) % 2 ? "light" : "dark"}`;
+      // aria-label, not title: a native tooltip appears over the choices below
+      // it and hides the very thing it is labelling.
+      b.setAttribute("aria-label", { q: "Queen", r: "Rook", b: "Bishop", n: "Knight" }[role]);
+      b.dataset.role = role;
+      const g = document.createElement("span");
+      g.className = `piece ${color}`;
+      g.textContent = GLYPH[role];
+      b.append(g);
       b.addEventListener("click", (ev) => {
         ev.stopPropagation();
         menu.remove();
@@ -206,7 +236,8 @@ export class Board {
       });
       menu.append(b);
     }
-    sq.append(menu);
+    // On the board, not in the square: the strip is four squares tall.
+    this.root.append(menu);
   }
 }
 
