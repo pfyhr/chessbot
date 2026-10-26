@@ -69,6 +69,23 @@ decline while real strength rises, which is exactly what happened.
 network's own games, and as play strengthens the outcome distribution it has to
 predict changes underneath it. The loss is against a moving target.
 
+## The raw policy got stronger, measured without any search at all
+
+At **1 node** there is no search: the move played is the policy's own argmax.
+
+| budget | Elo, gen2600 over gen1371 | games |
+|---|---|---|
+| 1 node (raw policy) | **+192.40 ± 34.73** | 300 |
+| 128 nodes (searched) | +144.92 ± 50.73 | 218 |
+
+The policy improved **more** than the searched player did. That is the expected
+shape: search partially compensates for a weaker policy, so giving both sides
+128 nodes narrows the gap that 1 node exposes in full.
+
+This closes the question the probes raised. `mate`, `defend` and `tactics` fell
+while the thing they claim to measure — the raw policy's move choice — got
+substantially better. The decline was distribution shift, not weakness.
+
 ## The policy sharpened; it did not flatten
 
 `bench/policy_entropy.py`, 2048 random-play positions (mean 30.5 legal moves):

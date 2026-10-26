@@ -32,10 +32,29 @@ consumes everything and no halving ever runs. Measured depth 1.57 ply; at
 `--considered 8` all three phases fit and depth is 2.58. Plan in
 `docs/root-width-plan.md`.
 
+The raw policy got **stronger**, not weaker: at 1 node, where there is no
+search and the move is the policy's own, gen2600 beats gen1371 by
+**+192.40 +/- 34.73** over 300 games -- a larger margin than the +144.92 the
+same pair shows at 128 nodes. The `mate`/`defend`/`tactics` decline was
+distribution shift in a fixed random-play suite, nothing more.
+
+## Next: establish a standing evaluation protocol
+
+The anchor problem is already solved -- see
+`bench/results/2026-09-25-first-calibrated-opponent.md`. Lc0 with a 16x2 net at
+1 node is the first opponent neither crushed nor crushing (gen1371 scored
+37.5%). With gen2600 at +145, the projected ladder is 58% / 38% / 16% at lc0
+1 / 4 / 16 nodes -- three usable rungs. `lc0` is installed and both nets are in
+`runs/nets/`.
+
+What is missing is that the protocol lives in a results file rather than a
+script. Codify `bench/gauntlet.sh`: frozen opponent set, **fixed nodes never a
+clock** (a contended match read +137 +/-49 where an idle one read +241 +/-73 on
+the same pair), booked openings, ~400 games per rung, and a maximum-likelihood
+Elo fit over the whole gauntlet rather than chained pairwise deltas.
+
 ## Open and cheap
 
-- **The 1-node match**, ~10 minutes: is the raw policy actually weaker, or are
-  the probes just off-distribution? `bench/long_oct_fixed.sh`, second duel.
 - **`c_scale` is 0.1 where the paper uses 1.0**, so the search moves the
   training target about a tenth as much as intended. Not a CLI flag yet.
 - **`chess_eval.py:213` hardcodes `max_considered=16`**, so the in-training

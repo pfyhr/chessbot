@@ -25,6 +25,10 @@ E1=${E1:-50}       # "worth changing the default for" threshold
 CAP=${CAP:-700}    # rounds
 
 cd $R || exit 1
+# fastchess autosaves its state to ./config.json; run it from a scratch dir so
+# it stops dirtying the repo root. All paths below are absolute.
+FCWORK=${TMPDIR:-/tmp}/fastchess-cwd
+mkdir -p $FCWORK
 print "=== SPRT bounds [0,$E1], started $(date) ===" | tee -a $L
 print "alpha=0.05 beta=0.05 model=logistic cap=$((CAP*2)) games conc=$CONC" | tee -a $L
 print "" | tee -a $L
@@ -32,16 +36,15 @@ print "" | tee -a $L
 duel () {  # label, ra_a, ra_b, nodes, seed, expect
   local label=$1 ra=$2 rb=$3 nd=$4 seed=$5 expect=$6
   local raw=$OUT/$label.raw t0=$SECONDS
-  $FC \
+  ( cd $FCWORK && $FC \
     -engine cmd=$R/.venv/bin/chess-uci args="--run $R/runs/w-long" \
       name=cand option.Generation=695 option.RootActions=$ra nodes=$nd \
     -engine cmd=$R/.venv/bin/chess-uci args="--run $R/runs/w-long" \
       name=base option.Generation=695 option.RootActions=$rb nodes=$nd \
     -sprt elo0=0 elo1=$E1 alpha=0.05 beta=0.05 model=logistic \
     -rounds $CAP -games 2 -concurrency $CONC -srand $seed \
-    -config discard=true \
     -openings file=$R/bench/openings-4ply.epd format=epd order=random \
-    -log file=/dev/null > $raw 2>&1
+    -log file=/dev/null > $raw 2>&1 )
   {
     print "$label  (ra$ra vs ra$rb at $nd nodes; expect: $expect)"
     print "    $(grep -E '^Games:' $raw | tail -1)"

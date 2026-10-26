@@ -20,6 +20,10 @@ CONC=${CONC:-4}
 ROUNDS=${ROUNDS:-150}   # 2 games per round
 
 cd $R || exit 1
+# fastchess autosaves its state to ./config.json; run it from a scratch dir so
+# it stops dirtying the repo root. All paths below are absolute.
+FCWORK=${TMPDIR:-/tmp}/fastchess-cwd
+mkdir -p $FCWORK
 print "=== long-oct fixed-length, started $(date) ===" | tee -a $L
 print "$((ROUNDS*2)) games per duel, concurrency=$CONC (sharing with FEA)" | tee -a $L
 print "positive Elo = long-oct/gen2600 won" | tee -a $L
@@ -29,15 +33,14 @@ duel () {  # label, nodes, note
   local label=$1 nd=$2 note=$3
   local raw=$OUT/${label}.raw
   local t0=$SECONDS
-  $FC \
+  ( cd $FCWORK && $FC \
     -engine cmd=$R/.venv/bin/chess-uci args="--run $R/runs/long-oct" \
       name=gen2600 option.Generation=2600 option.RootActions=32 nodes=$nd \
     -engine cmd=$R/.venv/bin/chess-uci args="--run $R/runs/weekend" \
       name=gen1371 option.Generation=1371 option.RootActions=32 nodes=$nd \
     -rounds $ROUNDS -games 2 -concurrency $CONC -srand $((RANDOM)) \
-    -config discard=true \
     -openings file=$R/bench/openings-4ply.epd format=epd order=random \
-    -log file=/dev/null > $raw 2>&1
+    -log file=/dev/null > $raw 2>&1 )
   print "$label  ($nd nodes) -- $note" | tee -a $L
   print "    $(grep -E '^Games:' $raw | tail -1)" | tee -a $L
   print "    $(grep -E '^Elo:' $raw | tail -1)" | tee -a $L

@@ -31,6 +31,10 @@ NODES=${NODES:-128} RA=${RA:-32}
 CAP=${CAP:-600}
 
 cd $R || exit 1
+# fastchess autosaves its state to ./config.json; run it from a scratch dir so
+# it stops dirtying the repo root. All paths below are absolute.
+FCWORK=${TMPDIR:-/tmp}/fastchess-cwd
+mkdir -p $FCWORK
 print "=== long-oct evaluation, started $(date) ===" | tee -a $L
 print "SPRT [0,$E1] alpha=$ALPHA beta=$BETA logistic, cap=$((CAP*2)) games" | tee -a $L
 print "$NODES nodes, RootActions=$RA, concurrency=$CONC (sharing with FEA)" | tee -a $L
@@ -40,16 +44,15 @@ duel () {  # label, runA, genA, runB, genB, question
   local label=$1 ra=$2 ga=$3 rb=$4 gb=$5 q=$6
   local raw=$OUT/${label}.raw
   local t0=$SECONDS
-  $FC \
+  ( cd $FCWORK && $FC \
     -engine cmd=$R/.venv/bin/chess-uci args="--run $R/runs/$ra" \
       name=A option.Generation=$ga option.RootActions=$RA nodes=$NODES \
     -engine cmd=$R/.venv/bin/chess-uci args="--run $R/runs/$rb" \
       name=B option.Generation=$gb option.RootActions=$RA nodes=$NODES \
     -sprt elo0=0 elo1=$E1 alpha=$ALPHA beta=$BETA model=logistic \
     -rounds $CAP -games 2 -concurrency $CONC -srand $((RANDOM)) \
-    -config discard=true \
     -openings file=$R/bench/openings-4ply.epd format=epd order=random \
-    -log file=/dev/null > $raw 2>&1
+    -log file=/dev/null > $raw 2>&1 )
   print "$label  ($ra/gen$ga  vs  $rb/gen$gb)" | tee -a $L
   print "    question: $q" | tee -a $L
   print "    $(grep -E '^Games:' $raw | tail -1)" | tee -a $L

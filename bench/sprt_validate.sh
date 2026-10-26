@@ -29,6 +29,10 @@ MODEL=${MODEL:-logistic}   # logistic = the Elo scale every past result used
 CAP=${CAP:-400}            # rounds; the null test would otherwise run forever
 
 cd $R || exit 1
+# fastchess autosaves its state to ./config.json; run it from a scratch dir so
+# it stops dirtying the repo root. All paths below are absolute.
+FCWORK=${TMPDIR:-/tmp}/fastchess-cwd
+mkdir -p $FCWORK
 print "=== SPRT validation, started $(date) ===" | tee -a $L
 print "H0=$ELO0 H1=$ELO1 alpha=$ALPHA beta=$BETA model=$MODEL cap=$((CAP*2)) games conc=$CONC" | tee -a $L
 print "" | tee -a $L
@@ -37,16 +41,15 @@ run () {  # label, nodesA, nodesB, seed, expected
   local label=$1 na=$2 nb=$3 seed=$4 expect=$5
   local raw=$OUT/${label}.raw
   local t0=$SECONDS
-  $FC \
+  ( cd $FCWORK && $FC \
     -engine cmd=$R/.venv/bin/chess-uci args="--run $R/runs/w-long" \
       name=A option.Generation=695 option.RootActions=32 nodes=$na \
     -engine cmd=$R/.venv/bin/chess-uci args="--run $R/runs/w-long" \
       name=B option.Generation=695 option.RootActions=32 nodes=$nb \
     -sprt elo0=$ELO0 elo1=$ELO1 alpha=$ALPHA beta=$BETA model=$MODEL \
     -rounds $CAP -games 2 -concurrency $CONC -srand $seed \
-    -config discard=true \
     -openings file=$R/bench/openings-4ply.epd format=epd order=random \
-    -log file=/dev/null > $raw 2>&1
+    -log file=/dev/null > $raw 2>&1 )
   local games llr res elo
   games=$(grep -E "^Games:" $raw | tail -1)
   llr=$(grep -iE "LLR" $raw | tail -1)
