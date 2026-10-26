@@ -76,6 +76,19 @@ The two disagreements are ties the network scores equal to four decimal places
 same move in all 12 search cases. It halves a 44 MB download for no decision
 the network itself can tell apart.
 
+### What the gate caught
+
+Vendoring ONNX Runtime looks like copying two files -- the bundle and the wasm
+binary -- and that is wrong. `ort.bundle.min.mjs` *dynamically imports* the
+`.jsep.mjs` glue, which then fetches the binary; the bundle does not inline it,
+despite the name. Ship two of the three and you get `no available backend
+found` at runtime, with the board, the search and every other part of the page
+working perfectly.
+
+Both gates therefore import ORT from `dist/vendor`, not from `node_modules`.
+Testing the npm package would have tested a dependency that was correctly
+installed rather than the copy that was incorrectly made.
+
 ### Why Node, not a headless browser
 
 ONNX Runtime Web's wasm backend is the same code the page falls back to, so

@@ -10,7 +10,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import * as ort from "onnxruntime-web";
+import { pathToFileURL } from "node:url";
 import { Engine } from "../src/engine.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -19,7 +19,15 @@ const DIST = process.env.DIST ?? path.join(WEB, "dist");
 const PLIES = Number(process.env.PLIES ?? 12);
 const SIMS = Number(process.env.SIMS ?? 16);
 
-ort.env.wasm.wasmPaths = path.join(WEB, "node_modules", "onnxruntime-web", "dist") + path.sep;
+// NOTE: ONNX Runtime is imported from `dist/vendor`, not from `node_modules`.
+// That is deliberate. Vendoring ORT means copying several files that depend on
+// each other -- the bundle dynamically imports the wasm glue, which fetches the
+// binary -- and missing one produces "no available backend found" at runtime
+// while every other part of the page works. Testing the npm package instead of
+// the copied files would not have noticed.
+const ort = await import(pathToFileURL(
+  path.join(DIST, "vendor", "ort", "ort.bundle.min.mjs")).href);
+ort.env.wasm.wasmPaths = pathToFileURL(path.join(DIST, "vendor", "ort") + path.sep).href;
 ort.env.wasm.numThreads = 1;
 ort.env.logLevel = "error";
 

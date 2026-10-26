@@ -53,10 +53,16 @@ cp "$WEB"/src/*.js "$WEB"/src/*.css "$DIST/src/"
 cp "$REPO/target/wasm32-unknown-unknown/release/az_wasm.wasm" "$DIST/"
 
 say "ONNX Runtime"
-# The bundled build inlines the wasm JS glue, so only the binary is external.
-# The `jsep` binary carries both the WebGPU backend and the CPU kernels, so one
-# file serves both paths -- nobody downloads a backend they cannot use.
+# Three files, and all three are needed. `ort.bundle.min.mjs` dynamically
+# imports the `.jsep.mjs` glue, which in turn fetches the `.jsep.wasm` binary --
+# the bundle does NOT inline the glue, despite the name. Shipping only the
+# bundle and the binary gets you "no available backend found" at runtime, with
+# everything else on the page working perfectly.
+#
+# The `jsep` binary carries the WebGPU backend and the CPU kernels together, so
+# one file serves both paths and nobody downloads a backend they cannot use.
 cp "$ORT/ort.bundle.min.mjs" "$DIST/vendor/ort/"
+cp "$ORT/ort-wasm-simd-threaded.jsep.mjs" "$DIST/vendor/ort/"
 cp "$ORT/ort-wasm-simd-threaded.jsep.wasm" "$DIST/vendor/ort/"
 
 # Pages serves no custom headers, so there is no COOP/COEP and therefore no
