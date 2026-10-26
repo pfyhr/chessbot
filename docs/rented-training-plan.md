@@ -79,6 +79,20 @@ Three things in that table were not obvious and change the plan:
    compute roof the moment bf16 doubles their arithmetic rate. Their bf16
    advantage is capped by bandwidth, far short of the headline number.
 
+**Which way does the arithmetic lean?** Toward compute, in fp32. The same
+roofline that caps bf16 puts this net at 72–213 FLOP/byte against fp32 ridge
+points of 34–106, so in fp32 every candidate card — including the 3090 and the
+M2 Max — should be compute-bound, and the measured 2.79× lands nearer the
+compute prediction (2.62×) than the bandwidth one (2.34×).
+
+That is a reason to expect the fp32 ranking to hold, and it is **not** a reason
+to skip §1.8. It is arithmetic on a datasheet: it assumes both machines reach
+the same fraction of their roof, it ignores everything in a generation that is
+not a convolution, and it is contradicted by the one precision measurement this
+project actually has — fp16 and bf16 on MPS bought 1.03–1.05×, which is what a
+*launch*-bound workload looks like and neither roof explains. Thirty seconds of
+batch sweep settles what an afternoon of this cannot.
+
 ### The table, both ways
 
 Roofline — attainable = min(peak, intensity × bandwidth) — at the two ends of
