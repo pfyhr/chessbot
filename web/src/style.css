@@ -52,6 +52,12 @@ section { background: var(--panel); border: 1px solid var(--line); border-radius
 .board {
   display: grid;
   grid-template-columns: repeat(8, 1fr);
+  /* Rows explicitly, not implicitly. `aspect-ratio` makes the BOARD square, but
+     the eight rows inside it are created implicitly and sized `auto`, so they
+     take the height of a piece glyph rather than an eighth of the board -- and
+     the squares come out wider than they are tall. The container being square
+     is not the same thing as its tracks being square. */
+  grid-template-rows: repeat(8, 1fr);
   aspect-ratio: 1;
   width: 100%;
   border-radius: 8px;
@@ -65,7 +71,9 @@ section { background: var(--panel); border: 1px solid var(--line); border-radius
 .board.flipped { transform: rotate(180deg); }
 .board.flipped .piece, .board.flipped .promo { transform: rotate(180deg); }
 
-.sq { position: relative; display: grid; place-items: center; }
+/* `min-*: 0` so an oversized glyph can never push a track past its 1fr share;
+   grid items default to `min-width: auto`, which is their content size. */
+.sq { position: relative; display: grid; place-items: center; min-width: 0; min-height: 0; }
 .sq.light { background: var(--light); }
 .sq.dark  { background: var(--dark); }
 .sq.last::after {
@@ -79,6 +87,11 @@ section { background: var(--panel); border: 1px solid var(--line); border-radius
 .sq.check { background: radial-gradient(circle, var(--check) 0%, transparent 72%), var(--dark); }
 
 .piece {
+  /* Fallback only; the container-query rule below is what actually applies.
+     A viewport-relative size is wrong here because the board is one column of
+     a two-column layout -- at 1080px the board is ~700px wide, so a square is
+     ~87px while 8.4vw asks for 90px, and the piece is wider than the square it
+     sits in. The glyph must be measured against the square, not the window. */
   font-size: min(8.4vw, 3.3rem);
   line-height: 1;
   cursor: default;
@@ -88,14 +101,46 @@ section { background: var(--panel); border: 1px solid var(--line); border-radius
 }
 /* Both colours use the solid glyph; white is the same shape inverted, which is
    the only way to get two sets that genuinely match across platforms. */
-.piece.white { color: #f6f3ee; -webkit-text-stroke: 1.4px #1b1b1b; text-shadow: 0 1px 2px rgba(0,0,0,.45); }
-.piece.black { color: #17191c; -webkit-text-stroke: 1.1px #cfc6b8; text-shadow: 0 1px 2px rgba(0,0,0,.35); }
+.piece.white { color: #f7f4ef; -webkit-text-stroke: 1.3px #15171a; text-shadow: 0 1px 2px rgba(0,0,0,.45); }
+/* A light halo rather than a light stroke. `-webkit-text-stroke` is centred on
+   the glyph outline, so half of it eats inward -- on the thin-stroked pieces
+   (rook, knight, bishop, queen) a 1.1px light stroke swallowed the black fill
+   and they rendered almost white, while the chunky pawn survived. A text-shadow
+   ring sits outside the glyph and leaves the fill alone. */
+.piece.black {
+  color: #101216;
+  text-shadow:
+    0 0 1px rgba(236, 230, 220, .95), 0 0 2px rgba(236, 230, 220, .85),
+    0 1px 2px rgba(0, 0, 0, .5);
+}
 .piece.movable { cursor: grab; }
 .piece.dragging { opacity: 0.28; }
 .piece.ghost {
   position: fixed; z-index: 99; pointer-events: none;
   transform: translate(-50%, -50%); display: grid; place-items: center;
 }
+
+/* Size containment as well as sizing: with `container-type: size` the square's
+   own dimensions cannot depend on its contents, so the glyph is free to be as
+   large as it likes without ever feeding back into the track height. */
+@supports (container-type: size) {
+  .sq { container-type: size; }
+  .piece { font-size: 78cqmin; }
+  .promo button { font-size: 34cqmin; }
+}
+
+/* File letters along the bottom rank, rank numbers up the left file. Drawn
+   from data attributes the grid already carries, so there are no extra nodes
+   to keep in sync and nothing to re-render on a flip. */
+.sq::before, .sq::after {
+  position: absolute; font-size: clamp(7px, 1.6cqmin + 4px, 11px);
+  font-weight: 600; opacity: .62; pointer-events: none; line-height: 1;
+}
+.sq[data-square$="1"]::after { content: attr(data-file); right: 3px; bottom: 2px; }
+.sq[data-square^="a"]::before { content: attr(data-rank); left: 3px; top: 2px; }
+.sq.light::before, .sq.light::after { color: #4e4132; }
+.sq.dark::before,  .sq.dark::after  { color: #cdbda4; }
+.board.flipped .sq::before, .board.flipped .sq::after { transform: rotate(180deg); }
 
 .dot, .capture { position: absolute; pointer-events: none; z-index: 2; }
 .dot { width: 26%; height: 26%; border-radius: 50%; background: rgba(20,20,20,.38); }
@@ -156,5 +201,13 @@ label { display: inline-flex; align-items: center; gap: 5px; font-size: 0.9rem; 
 .progress { background: var(--panel); border: 1px solid var(--line);
             border-radius: 6px; height: 8px; overflow: hidden; margin: 10px 0; max-width: 420px; }
 #bar { height: 100%; width: 0; background: var(--accent); transition: width .15s linear; }
+
+.status {
+  margin: 12px 0 0;
+  min-height: 1.6em;
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+}
+.status.over { color: var(--accent); font-weight: 600; }
 
 footer { margin-top: 36px; border-top: 1px solid var(--line); padding-top: 14px; }

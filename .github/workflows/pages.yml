@@ -79,6 +79,20 @@ jobs:
         run: node tools/smoke.mjs
         working-directory: web
 
+      # Both engines. The board bug that prompted this gate was invisible in
+      # Chromium -- it stretches an implicit `auto` grid row, WebKit sizes it
+      # from its content -- so a Chromium-only check would have passed the
+      # broken build. It also loads the real page over HTTP, which is the only
+      # gate that covers module loading, the ONNX session starting and the
+      # page's own backend self-check.
+      - name: Browsers for the layout gate
+        run: npx playwright install --with-deps chromium webkit
+        working-directory: web
+
+      - name: Layout and terminal-state gate
+        run: node tools/layout_check.mjs
+        working-directory: web
+
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

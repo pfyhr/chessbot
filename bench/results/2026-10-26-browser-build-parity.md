@@ -107,3 +107,67 @@ The page is a distribution channel, not an evaluation. It says nothing about
 strength that `2026-10-26-long-oct-the-probes-were-wrong.md` did not already
 say: +144.92 ± 50.73 Elo over the run's starting checkpoint at 128 nodes, and
 the network will still hang pieces.
+
+---
+
+## Addendum: three bugs the first gate could not see
+
+Same day, from real use of the deployed page. All three were invisible to a
+gate that only checked numbers.
+
+### The backend was wrong, and said so in a footnote
+
+Safari picked WebGPU and the page's own load-time self-check fired at 0.42 —
+printed as "this backend may be computing something slightly different", which
+badly undersold it. Measuring it properly, against ONNX Runtime on CPU with the
+same fp16 model over the same 127 positions:
+
+| | worst logit | worst value | top-1 agree | mean KL | search agrees |
+|---|---|---|---|---|---|
+| wasm CPU | reference | reference | 127/127 | — | 12/12 |
+| WebGPU (Safari) | 0.724 | 0.143 | 122/127 | 1.2e-03 | 11/12 |
+
+A 0.14 error on the value head is not rounding, and it changed the move a
+fixed-seed search played in 1 of 12 cases. Meanwhile the Node and Chromium
+gates passed, because neither runs WebGPU.
+
+Two things came out of this. The page now **verifies whatever backend it
+starts** against reference vectors before using it, falls back to one that
+passes, and says plainly that the moves are not the network's if nothing does.
+And the GPU became opt-in (`?backend=webgpu`) rather than preferred — because
+it is also **slower**: 68 evaluations/second against 205 for the wasm kernels
+on the same machine. This search evaluates one leaf at a time, so a batch of
+one pays full dispatch overhead for 75M multiply-adds. The GPU was losing on
+both axes.
+
+### The board was not square, in one engine only
+
+`aspect-ratio: 1` made the *container* square while the eight rows inside were
+implicit and `auto`-sized — to the height of a piece glyph, not to an eighth of
+the board. WebKit renders that as visibly collapsed empty ranks. Chromium
+stretches the rows and looked perfectly fine; with the fix reverted, headless
+Chromium still reported square squares and was caught only by a 2px shortfall
+in tiling. **A single-engine gate would have passed the broken build.**
+
+Compounding it, the glyph was sized `min(8.4vw, 3.3rem)` — against the
+*viewport*, while the board is one column of a two-column grid. At 1080px the
+board is ~700px wide, so a square is ~87px and the glyph asked for 90px: the
+piece was wider than the square it sat in. Now sized in `cqmin` against the
+square, with `container-type: size` so content can never feed back into the
+track at all.
+
+### The result was computed and then hidden
+
+Two games ended in mate and the page said nothing. It had detected both
+correctly — the board was non-interactive, the engine did not reply — but
+`#status` lived inside the `#loading` div, which is hidden once the network
+finishes downloading. Every message after boot, the result included, was
+written into an element nobody could see.
+
+There is no clever lesson here beyond the obvious one: *all three of these were
+visible in two seconds of looking at the page, and none of them were visible to
+a gate that checked 127 positions to four decimal places.* The numerical gate
+was not wrong, it was answering a different question. The layout gate now runs
+the real page in both engines, and replays both mates to assert the result is
+shown, no further moves are accepted, and the evaluation panel is not still
+listing candidates from a position that is two moves old.

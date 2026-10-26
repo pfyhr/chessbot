@@ -23,6 +23,12 @@ const enc = new TextEncoder();
 /** Terminal status, as `eng_outcome` and `eng_search_proven` report it. */
 const ONGOING = -1, DRAW = 0, WIN = 1, LOSS = 2;
 
+/// Indexed by `eng_outcome_reason`.
+const REASONS = [
+  "", "checkmate", "stalemate", "insufficient material",
+  "the fifty-move rule", "threefold repetition",
+];
+
 export class Engine {
   #x; #h; #obsLen; #policyLen; #logitPtr;
 
@@ -87,6 +93,12 @@ export class Engine {
     return s ? s.split(" ") : [];
   }
 
+  /** The same moves in SAN, recorded by the core as each was played. */
+  historySan() {
+    const s = this.#str(this.#x.eng_history_san(this.#h));
+    return s ? s.split(" ") : [];
+  }
+
   /** `{ from: [to, ...] }`, what a board widget needs to allow a drag. */
   dests() {
     const out = new Map();
@@ -108,12 +120,16 @@ export class Engine {
    * move list here.
    */
   outcome() {
-    switch (this.#x.eng_outcome(this.#h)) {
-      case ONGOING: return null;
-      case DRAW: return { kind: "draw", winner: null };
-      case WIN: return { kind: "win", winner: this.turn };
-      case LOSS: return { kind: "win", winner: this.turn === "white" ? "black" : "white" };
-    }
+    const code = this.#x.eng_outcome(this.#h);
+    if (code === ONGOING) return null;
+    const reason = REASONS[this.#x.eng_outcome_reason(this.#h)] ?? "the rules";
+    if (code === DRAW) return { kind: "draw", winner: null, reason };
+    const mover = this.turn;
+    return {
+      kind: "win",
+      winner: code === WIN ? mover : mover === "white" ? "black" : "white",
+      reason,
+    };
   }
 
   play(uci) { return this.#withStr(uci, (p, l) => this.#x.eng_play_uci(this.#h, p, l) === 0); }

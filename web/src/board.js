@@ -44,6 +44,8 @@ export class Board {
         const sq = document.createElement("div");
         sq.className = `sq ${(f + rank) % 2 ? "light" : "dark"}`;
         sq.dataset.square = name;
+        sq.dataset.file = FILES[f];
+        sq.dataset.rank = String(rank);
         this.squares.set(name, sq);
         this.root.append(sq);
       }

@@ -20,14 +20,19 @@
 </header>
 
 <div id="loading">
-  <p id="status">Starting…</p>
+  <p id="bootstatus">Starting…</p>
   <div class="progress"><div id="bar"></div></div>
-  <p class="dim small">First visit downloads about 25about 30&nbsp;MB of network and runtimenbsp;MB of network and runtime. It is cached afterwards.</p>
+  <p class="dim small">First visit downloads about 25&nbsp;MB of network and runtime. It is cached afterwards.</p>
 </div>
 
 <main id="app" class="hidden">
   <div class="left">
     <div id="board"></div>
+    <!-- The status line lives HERE, not in #loading. It used to sit beside the
+         progress bar, and #loading is hidden once the network has loaded -- so
+         every message after boot, the game result included, was written into an
+         element nobody could see. -->
+    <p id="status" class="status">&nbsp;</p>
   </div>
 
   <div class="right">

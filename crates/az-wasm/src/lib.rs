@@ -37,6 +37,7 @@
 use az_core::chess::ChessPos;
 use az_core::game::{obs_len, Game, Outcome};
 use az_core::mcts::{Config, Rng, Search, Status};
+use shakmaty::san::SanPlus;
 use shakmaty::uci::UciMove;
 use shakmaty::{Move, Position};
 
@@ -49,6 +50,12 @@ pub struct Engine {
     /// unmake -- `ChessPos` carries an `Arc` history chain and has no inverse.
     stack: Vec<ChessPos>,
     played: Vec<String>,
+    /// SAN for each played move, recorded at play time.
+    ///
+    /// SAN depends on the position *before* the move -- which pieces could also
+    /// have reached the square, whether it gives check -- so it cannot be
+    /// recovered from a UCI list alone without replaying the game.
+    san: Vec<String>,
     search: Option<Search<ChessPos>>,
     obs: Vec<f32>,
     strbuf: Vec<u8>,
@@ -111,6 +118,7 @@ pub extern "C" fn eng_new() -> *mut Engine {
     Box::into_raw(Box::new(Engine {
         stack: vec![ChessPos::new()],
         played: Vec::new(),
+        san: Vec::new(),
         search: None,
         obs: vec![0.0; OBS],
         strbuf: Vec::new(),
@@ -149,6 +157,7 @@ pub unsafe extern "C" fn eng_reset(h: *mut Engine) {
     e.stack.truncate(1);
     e.stack[0] = ChessPos::new();
     e.played.clear();
+    e.san.clear();
     e.search = None;
 }
 
@@ -171,6 +180,7 @@ pub unsafe extern "C" fn eng_set_fen(h: *mut Engine, ptr: *const u8, len: usize)
             e.stack.clear();
             e.stack.push(p);
             e.played.clear();
+            e.san.clear();
             e.search = None;
             0
         }
@@ -259,6 +269,36 @@ pub unsafe extern "C" fn eng_outcome(h: *mut Engine) -> i32 {
     }
 }
 
+/// Why the game ended: 0 not over, 1 checkmate, 2 stalemate, 3 insufficient
+/// material, 4 fifty-move rule, 5 threefold repetition.
+///
+/// The order follows `az-core`'s own precedence in `Game::expand`, so this can
+/// never disagree with [`eng_outcome`] about whether the game is over -- only
+/// elaborate on it. A page that can say *stalemate* rather than *draw* is the
+/// difference between a result and a shrug.
+///
+/// # Safety
+/// `h` must be a live engine handle.
+#[no_mangle]
+pub unsafe extern "C" fn eng_outcome_reason(h: *mut Engine) -> i32 {
+    let e = eng!(h);
+    let pos = e.cur();
+    let mut moves = Vec::new();
+    if pos.expand(&mut moves).is_none() {
+        return 0;
+    }
+    if moves.is_empty() {
+        return if pos.inner().is_check() { 1 } else { 2 };
+    }
+    if pos.inner().is_insufficient_material() {
+        return 3;
+    }
+    if pos.inner().halfmoves() >= 100 {
+        return 4;
+    }
+    5
+}
+
 /// # Safety
 /// `h` must be a live engine handle.
 #[no_mangle]
@@ -280,9 +320,12 @@ pub unsafe extern "C" fn eng_play_uci(h: *mut Engine, ptr: *const u8, len: usize
     let Some(mv) = e.resolve(uci) else {
         return -1;
     };
+    // Before the move is made: SAN is defined against the prior position.
+    let san = SanPlus::from_move(e.cur().inner().clone(), mv).to_string();
     let mut next = e.cur().clone();
     next.play(mv);
     e.stack.push(next);
+    e.san.push(san);
     // Re-spelled from the resolved move so the stored list is canonical: a GUI
     // may send "e1h1" for a castle, and the move list should not show that.
     e.played.push(UciMove::from_standard(mv).to_string());
@@ -302,6 +345,7 @@ pub unsafe extern "C" fn eng_undo(h: *mut Engine) -> i32 {
     }
     e.stack.pop();
     e.played.pop();
+    e.san.pop();
     e.search = None;
     0
 }
@@ -314,6 +358,17 @@ pub unsafe extern "C" fn eng_undo(h: *mut Engine) -> i32 {
 pub unsafe extern "C" fn eng_history_uci(h: *mut Engine) -> usize {
     let e = eng!(h);
     let s = e.played.join(" ");
+    e.set_str(&s)
+}
+
+/// Space-separated SAN of every move played, into the scratch buffer.
+///
+/// # Safety
+/// `h` must be a live engine handle.
+#[no_mangle]
+pub unsafe extern "C" fn eng_history_san(h: *mut Engine) -> usize {
+    let e = eng!(h);
+    let s = e.san.join(" ");
     e.set_str(&s)
 }
 

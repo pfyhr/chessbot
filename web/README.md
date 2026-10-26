@@ -89,6 +89,49 @@ Both gates therefore import ORT from `dist/vendor`, not from `node_modules`.
 Testing the npm package would have tested a dependency that was correctly
 installed rather than the copy that was incorrectly made.
 
+### The layout and terminal-state gate
+
+Geometry needs a layout engine, so `tools/layout_check.mjs` runs the built site
+in real browsers -- **both Chromium and WebKit**, at phone, tablet and desktop
+widths -- and asserts the board is square, every square is square, eight of
+them tile the content box, nothing overflows horizontally, and the page reaches
+a playable state with no self-check warning.
+
+Two engines because one was not enough. The board had `aspect-ratio: 1`, so the
+*container* was square, but its eight rows were implicit and sized `auto` -- to
+the height of a piece glyph rather than an eighth of the board. WebKit renders
+that as visibly collapsed empty ranks; Chromium stretches the rows and looked
+fine. A Chromium-only gate would have passed the broken build.
+
+It also replays two real games that ended in mate and asserts the page says
+`White wins by checkmate`, accepts no further moves, does not answer, and is
+not still showing the previous search's candidates. Games are loaded through
+`?moves=`, a real feature rather than a test hook, so the test takes the path a
+visitor takes.
+
+### Why the GPU is opt-in
+
+`?backend=webgpu` asks for it; the default is the wasm kernels. That is the
+opposite of what you would expect, and it is what the measurements say.
+
+Against ONNX Runtime on CPU with the same fp16 model, Safari's WebGPU path
+came out at:
+
+| | worst logit | worst value | top-1 agree | mean KL | search agrees |
+|---|---|---|---|---|---|
+| wasm CPU | reference | reference | 127/127 | — | 12/12 |
+| WebGPU | 0.724 | 0.143 | 122/127 | 1.2e-03 | 11/12 |
+
+A value-head error of 0.14 is not rounding, and it changed the move a
+fixed-seed search played. It is also **slower**: 68 evaluations/second against
+205 for wasm on the same machine, because this search evaluates one leaf at a
+time and a batch of one pays full GPU dispatch overhead for 75M multiply-adds.
+
+So the page verifies whichever backend it starts against reference vectors
+before using it, falls back to one that passes, and says plainly in the UI if
+nothing does. A backend that is subtly wrong is worse than one that fails,
+because nothing reports it.
+
 ### Why Node, not a headless browser
 
 ONNX Runtime Web's wasm backend is the same code the page falls back to, so

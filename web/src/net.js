@@ -32,33 +32,63 @@ export class Net {
   }
 
   /**
-   * Fetch the weights and start a session.
+   * Fetch the weights and start a session on a backend that passes `verify`.
    *
-   * `onProgress(received, total)` is called while downloading; the model is
-   * over 20 MB and a page that sits blank for that long looks broken.
+   * `verify(net)` returns the worst absolute deviation from the reference
+   * vectors; a backend is only used if that is within `tolerance`. This is not
+   * belt-and-braces. Safari's WebGPU fp16 path was measured at 0.72 worst-case
+   * on a logit and 0.14 on the value head against ONNX Runtime on CPU -- it
+   * changed the top policy move in 5 of 127 positions and the search's chosen
+   * move in 1 of 12, while the Node and Chromium gates passed. A backend that
+   * is subtly wrong is worse than one that fails, because nothing reports it.
+   *
+   * CPU first, which is not the obvious order and is what the measurements
+   * say: this search evaluates one leaf at a time, so a GPU pays full dispatch
+   * overhead on a batch of one. Safari's WebGPU managed 68 evaluations/second
+   * where the wasm kernels do 205 on the same machine. The GPU is both less
+   * accurate and three times slower here, so it is opt-in via `?backend=webgpu`
+   * rather than preferred.
    */
-  static async load(url, { obsLen, policyLen, onProgress } = {}) {
+  static async load(url, { obsLen, policyLen, onProgress, verify, tolerance = Infinity,
+                           prefer = null } = {}) {
     const bytes = await fetchWithProgress(url, onProgress);
 
-    // Ask for WebGPU and accept wasm. ORT will itself fall back if a provider
-    // fails to initialise, but asking for an unavailable provider throws on
-    // some builds, so the capability is checked first.
-    const wantGpu = typeof navigator !== "undefined" && "gpu" in navigator;
-    const attempts = wantGpu ? [["webgpu"], ["wasm"]] : [["wasm"]];
+    const hasGpu = typeof navigator !== "undefined" && "gpu" in navigator;
+    const order = prefer === "webgpu" && hasGpu ? ["webgpu", "wasm"] : ["wasm"];
 
-    let lastErr;
-    for (const providers of attempts) {
+    const tried = [];
+    let best = null;
+    for (const backend of order) {
+      let session;
       try {
-        const session = await ort.InferenceSession.create(bytes, {
-          executionProviders: providers,
+        session = await ort.InferenceSession.create(bytes, {
+          executionProviders: [backend],
           graphOptimizationLevel: "all",
         });
-        return new Net(session, { obsLen, policyLen, backend: providers[0] });
       } catch (e) {
-        lastErr = e;
+        tried.push(`${backend}: would not start (${e.message})`);
+        continue;
       }
+      const net = new Net(session, { obsLen, policyLen, backend });
+      if (!verify) return net;
+
+      const worst = await verify(net);
+      net.deviation = worst;
+      if (worst <= tolerance) {
+        net.rejected = tried;
+        return net;
+      }
+      tried.push(`${backend}: self-check off by ${worst.toExponential(1)}`);
+      best ??= net;
+      await session.release?.();
     }
-    throw new Error(`no ONNX backend would start: ${lastErr}`);
+
+    if (!best) throw new Error(`no ONNX backend would start: ${tried.join("; ")}`);
+    // Nothing passed. Hand back the least-bad one and let the page decide
+    // whether to play with it -- but it has to be told, not guessed at.
+    best.rejected = tried;
+    best.unverified = true;
+    return best;
   }
 
   /**

@@ -7,6 +7,7 @@
     "parity": "node tools/parity_check.mjs"
   },
   "devDependencies": {
-    "onnxruntime-web": "1.23.0"
+    "onnxruntime-web": "1.23.0",
+    "playwright": "^1.64.1"
   }
 }
