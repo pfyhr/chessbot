@@ -7,41 +7,77 @@ against the thresholds declared *before* it.
 ## The short version
 
 The instinct is "rent a faster GPU". The repo's own measurements say the
-binding constraint is somewhere else, and that picking hardware on GPU class
-would waste most of the money.
+binding constraint is partly elsewhere, and that picking hardware on GPU class
+alone would waste money.
 
-Two numbers already on record:
+The one real datapoint is in commit `86b661a`, which profiled **the same
+workload on both machines on the same day**:
 
-* `crates/az-core/src/selfplay.rs:225` — on an **RTX 3090**, the Rust driver was
-  **29 s of a 92 s generation**, 31.5% of the wall clock.
-* `bench/results/2026-10-06-the-ceiling-was-the-other-machines-cpu.md` — Jupiter's
-  M2 Max did the same driver work in **9.3 s**.
+> the single-threaded Rust driver costs 29.1 s of a 92 s generation there
+> [an RTX 3090] against 14.6 s of 190 s on an M2 Max
 
-The driver is CPU work, it is **single-threaded on purpose**, and a rented
-core is typically 2–3× slower per thread than an M2 Max P-core. So the rented
-box starts with a handicap on the one part of the generation that money cannot
-buy away.
+Everything below is arithmetic on those two lines.
 
-Amdahl, with Jupiter's current 97 s/generation and a driver cost somewhere
-near 9 s:
+| | M2 Max | RTX 3090 |
+|---|---:|---:|
+| driver (CPU, single-threaded) | 14.6 s | **29.1 s** |
+| everything else (GPU forward + training) | 175.4 s | 62.9 s |
+| generation | 190 s | 92 s |
 
-| box | GPU share of a generation | driver | total | vs Jupiter |
-|---|---:|---:|---:|---:|
-| Jupiter (M2 Max) | ~88 s | 9 s | 97 s | 1.0× |
-| 4090, fast core | ~9 s | ~18 s | ~27 s | **3.6×** |
-| 4090, slow core | ~9 s | ~29 s | ~38 s | 2.6× |
-| H100, fast core | ~3.5 s | ~18 s | ~22 s | **4.4×** |
-| H100, slow core | ~3.5 s | ~29 s | ~33 s | 2.9× |
+Two facts fall out, and they point in opposite directions:
 
-**An H100 costs 2–4× a 4090 and buys about 20% more throughput**, because at
-that point the GPU is idle waiting for one CPU thread. The table is arithmetic
-on two measured points, not a measurement — which is exactly what §1 is for.
+* **The 3090's GPU work was 2.79× the M2 Max's.** Against a vendor peak-fp32
+  ratio of 2.62× that is ~107% scaling efficiency, so at this net size the GPU
+  side does scale with peak fp32 — which makes extrapolating to other cards
+  defensible.
+* **The 3090's CPU core was 2.0× slower on the driver.** The driver is
+  single-threaded *on purpose* — rayon was tried the same day (`86b661a`,
+  reverted in `2131d58`) and measured slower, 4.8 s → 5.4 s at 4 threads,
+  because a call carries ~5 ms of work across at most 256 slots. More cores
+  buy nothing.
 
-Caveat on the 29 s: it dates from around the Gumbel-noise change (`d576652`)
-that cut the driver 14.6 s → 9.3 s on Jupiter. If that landed after the 3090
-reading, the real figure today is nearer 18 s and every row above improves.
-We do not know which, and guessing is how the last four ceiling estimates went
-wrong.
+`2131d58` drew the conclusion itself: *"the driver is 32% of wall clock on a
+fast GPU and single-threaded, which caps even a 10x card at 2.5x."*
+
+### The corrected table
+
+Jupiter today is 97.0 s/generation with `torch.compile`, of which ~9.3 s is
+driver (CPU work, unaffected by compile) and ~87.7 s is GPU. Scaling the
+measured 3090 point by vendor peak fp32, and taking the rented driver cost as
+29.1 s reduced by the 1.56× the Gumbel-noise change (`d576652`) bought after
+that profile was taken:
+
+| card | peak fp32 | GPU share | driver | generation | vs Jupiter |
+|---|---:|---:|---:|---:|---:|
+| RTX 3090 | 35.6 TF | 31.4 s | 18.7 s | 50.1 s | **1.9×** |
+| RTX 4090 | 82.6 TF | 13.6 s | 18.7 s | 32.2 s | **3.0×** |
+| L40S | 91.6 TF | 12.2 s | 18.7 s | 30.9 s | **3.1×** |
+| H100 SXM | 66.9 TF | 16.7 s | 18.7 s | 35.4 s | **2.7×** |
+
+With a notably fast rented core (driver 14 s) the 4090 row reaches 3.5×; with a
+slow one (driver 29 s, i.e. no better than the 3090's) it falls to 2.3×.
+
+**Two things to take from this.** First, the expected 4090 result is ~3.0×,
+*not* the 3.6× an earlier draft of this document claimed — that figure rested
+on `2026-08-20-driver-ceiling.md`'s "est. 10× M2 Max" for a 4090, which was an
+estimate and is contradicted by the measured 3090 at 2.8×. Second, and more
+usefully:
+
+> **On fp32, an H100 is slower than a 4090 here** — 66.9 TFLOPS against 82.6 —
+> while costing 2–4× as much. Its advantage is tensor cores, which only pay if
+> TF32 or bf16 earns something. On MPS reduced precision bought 1.03–1.05×,
+> i.e. nothing.
+
+So the H100 is worth renting for one hour to test TF32/bf16, and is otherwise
+the worst buy on the list.
+
+### How confident is this
+
+The GPU-side scaling rests on **one** measured card and a peak-fp32
+extrapolation. The driver cost on a rented core rests on **one** core, scaled
+by a factor measured on a different machine. Call it ±30% on the "vs Jupiter"
+column, which is enough to move the 4090 row across the decision threshold in
+§1 in either direction. That is precisely why §1 exists and why it is cheap.
 
 ## 1. The measurement session
 
@@ -73,11 +109,19 @@ Measure, in this order, stopping early if a threshold below is missed:
    then `--sweep 512,1024,2048,4096` and `--tf32`.
 6. **`torch.compile` on CUDA**, on and off. Worth 1.36× on Jupiter; unknown
    here, and compile times on CUDA are longer.
-7. **bf16/fp16.** On MPS this bought 1.03–1.05× — nothing, because at 8×8
-   spatial the work is launch- and bandwidth-bound. Tensor cores may change
-   that, which is the one genuine reason to retest it on CUDA.
+7. **TF32 and bf16.** On MPS reduced precision bought 1.03–1.05× — nothing,
+   because at 8×8 spatial the work is launch- and bandwidth-bound. On CUDA this
+   is the single highest-value unknown: it is the *only* thing that would make
+   an H100 worth more than a 4090, since the H100's fp32 peak is lower. If
+   TF32 gives a large win the hardware ranking changes completely; if it gives
+   nothing, never rent an H100 for this workload.
 
 ### Declared in advance
+
+The table above puts the expected 4090 result at ~3.0×, which sits exactly on
+the "worth it" line below. That is not a hedge — it means the session is
+genuinely decisive rather than confirmatory, and that the thresholds must be
+read as written rather than argued with afterwards.
 
 **Worth renting if**, at the long run's settings:
 
@@ -118,11 +162,14 @@ already been measured as a loss. The core-count column is only there because
 Vast allocates cores in proportion to GPUs, and because fastchess matches (a
 separate job) do scale with cores.
 
-The earlier 1.2× headroom estimate for a 4090 came from
-`2026-08-20-driver-ceiling.md` — driver 292,646 evals/s against an estimated
-237,000 the card can consume. It assumed an M2-class core doing the driving. On
-a rented core at a third of that, the headroom is **below 1.0× and the driver is
-already the ceiling**, which is what the 3090's 29 s is showing.
+The 1.2× headroom figure in `2026-08-20-driver-ceiling.md` — driver 292,646
+evals/s against an estimated 237,000 a 4090 can consume — carries two
+assumptions that do not survive. It assumed an M2-class core doing the driving,
+where a rented core measured 2× slower; and its "est. 10× M2 Max" for the card
+is contradicted by the measured 3090 at 2.8×, which scales to ~6.5× for a 4090.
+Netted out, the driver on a rented box is roughly **half** the generation at
+4090 class, not a 1.2× margin. Treat the whole of that document's rented-GPU
+column as superseded by the measured point in `86b661a`.
 
 ## 3. What it costs
 
@@ -133,27 +180,33 @@ throughput that was otherwise unavailable.
 At $0.75/h, **under $5**. Doing all three classes: **$10–15**. This is cheap
 enough that the only real cost is attention.
 
-**A 72 h run**, assuming the 4090 row above holds at 3.6×:
+**A 72 h run**, at the corrected 4090 figure of 3.0× (range 2.3–3.5×):
 
-| | Jupiter | 4090 @ 3.6× |
-|---|---:|---:|
-| generations/hour | 37.1 | ~133 |
-| generations in 72 h | 2,601 | ~9,600 |
-| cost | ~0 | ~$36 (72 h × $0.50) |
-| wall clock for 2,601 gens | 72 h | **20 h** |
+| | Jupiter | 4090 @ 3.0× | 4090 @ 2.3× (slow core) |
+|---|---:|---:|---:|
+| generations/hour | 37.1 | ~112 | ~85 |
+| generations in 72 h | 2,601 | ~7,800 | ~6,000 |
+| cost | ~0 | ~$36 (72 h × $0.50) | ~$36 |
+| wall clock for 2,601 gens | 72 h | **24 h** | **31 h** |
 
 **On Elo, carefully.** `long-oct` gained **+144.92 ± 50.73** over 2,601
-generations — 0.056 Elo/generation. Multiplying that by 9,600 gives +535, and
+generations — 0.056 Elo/generation. Multiplying that by 7,800 gives +437, and
 that number is almost certainly wrong. Within that same run the first half
 measured +159 and the second +95, so the rate roughly halved across one
-doubling. On that shape, 3.7× the generations plausibly buys **+250 to +350**,
-not +535. It could be less: nothing here says the curve does not flatten
+doubling. On that shape, 3× the generations plausibly buys **+220 to +300**,
+not +437. It could be less: nothing here says the curve does not flatten
 further, and the run has only ever been observed over one 72 h window.
 
-The defensible claim is the cheap one: **~$36 buys the same result in 20 hours
-instead of 72**, and makes a multi-day run a weekend rather than a fortnight.
-Any Elo figure beyond that is extrapolation, and this project has a long record
-of extrapolations that did not survive the games.
+The defensible claim is the cheap one: **~$36 buys the same result in about a
+day instead of three**, and makes a multi-day run a weekend rather than a
+fortnight. Any Elo figure beyond that is extrapolation, and this project has a
+long record of extrapolations that did not survive the games.
+
+Note how much of the money buys an idle GPU. At the 4090 row, 18.7 s of every
+32.2 s generation is one CPU core doing tree descent — **58% of the rental**.
+That is the strongest argument for spending a few days on game-granularity
+parallelism *before* spending money, and it gets stronger with every faster
+card.
 
 ## 4. What changes in the code
 
@@ -208,14 +261,38 @@ ask another session to do it on my behalf.
    down so that the decision is made against them rather than against how much
    effort has already gone in.
 
+## A correction worth recording
+
+An earlier draft of this document had the 4090 at 3.6× and a "$36 buys 72 h in
+20 h" headline. Both rested on `2026-08-20-driver-ceiling.md`'s **estimate**
+that a 4090 is 10× an M2 Max, which was never measured and which the 3090
+profile contradicts.
+
+A reviewer caught it, and their own arithmetic contained the mirror-image
+mistake worth naming: they compared the 3090's 62.9 s of non-driver time
+against *Jupiter's current* ~87.7 s, concluding the 3090 was only 1.4× an M2
+Max. But 87.7 s is post-`torch.compile` and post-optimisation; the
+contemporaneous M2 figure, from the same commit message as the 3090 number, is
+**175.4 s**. Like-for-like the ratio is 2.79×, not 1.4×.
+
+Both errors are the same error: taking one number from one date and one from
+another because they describe "the same thing". They do not. Any ratio here has
+to come from two measurements of the same workload at the same commit, which is
+why `86b661a` is the only pair in this document that is quoted together.
+
 ## Honest summary
 
-The measurement session is cheap and worth doing. The 72 h run is a reasonable
-buy *if* the 4090 row survives contact. But the most likely outcome of §1, on
-the evidence already in this repo, is that the driver turns out to be the
-ceiling on rented hardware — and the right response to that is a few days of
-work making self-play parallel at game granularity, which costs nothing, helps
-Jupiter too, and would have to happen before an H100 was ever worth its price.
+The measurement session is cheap and worth doing. The 72 h run is a marginal
+buy: the expected 4090 result sits on the decision threshold, and a slow rented
+core pushes it under.
+
+The most useful finding is not about hardware at all. At the 4090 row, **58% of
+the rental is one CPU core doing tree descent while the GPU waits**, and that
+fraction rises with every faster card — which is why an H100 is predicted to be
+*slower* than a 4090 here on fp32. The highest-value work is therefore making
+self-play parallel at game granularity: it costs nothing, it helps Jupiter too,
+and it is the prerequisite for any rented card above 4090 class being worth its
+price. Renting first would be paying to discover that.
 
 ### Sources for the price estimates (2026-10-26)
 
