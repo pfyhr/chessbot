@@ -7,8 +7,19 @@ description = "Game abstraction, encodings, Gumbel MCTS and self-play driver"
 
 [dependencies]
 shakmaty = "0.30"
+# Optional so that `az-wasm` can turn it off: rayon does not build for
+# wasm32-unknown-unknown without atomics, and the browser build drives a single
+# search anyway.
+rayon = { version = "1.10", optional = true }
 
 [features]
+default = ["parallel"]
+
+# Game-granularity threading in the self-play driver. Off, the driver is the
+# sequential one that has shipped since August and the rayon dependency is not
+# compiled at all.
+parallel = ["dep:rayon"]
+
 # TEMPORARY (2026-10-06) hot-path timers; see src/prof.rs. Off by default and
 # zero-cost when off -- every prof_* macro expands to the bare expression.
 hotprof = []

@@ -1,10 +1,11 @@
 #!/bin/bash
 # Provision a rented GPU box and start the width-against-budget sweep.
 #
-#   ./bench/vast_deploy.sh 1.2.3.4 8640 check   # inspect only, install nothing
-#   ./bench/vast_deploy.sh 1.2.3.4 8640 probe   # build, then measure both arms
-#   ./bench/vast_deploy.sh 1.2.3.4 8640 ab      # build and launch the sims A/B
-#   ./bench/vast_deploy.sh 1.2.3.4 8640         # ship, build, calibrate, launch sweep
+#   ./bench/vast_deploy.sh 1.2.3.4 8640 check    # inspect only, install nothing
+#   ./bench/vast_deploy.sh 1.2.3.4 8640 measure  # build, then run docs/rented-training-plan.md section 1
+#   ./bench/vast_deploy.sh 1.2.3.4 8640 probe    # build, then measure both A/B arms (needs 2 cards)
+#   ./bench/vast_deploy.sh 1.2.3.4 8640 ab       # build and launch the sims A/B
+#   ./bench/vast_deploy.sh 1.2.3.4 8640          # ship, build, calibrate, launch sweep
 #
 # Ships source and one checkpoint rather than cloning: the work is on the laptop
 # and not pushed. Two things about Vast containers that this handles and a naive
@@ -24,6 +25,39 @@ SSHOPTS="-o StrictHostKeyChecking=accept-new -o LogLevel=ERROR"
 SSH="ssh -p $PORT $SSHOPTS root@$HOST"
 
 say () { printf '\n\033[1m== %s\033[0m\n' "$*"; }
+
+# EGRESS TEST, before committing hours to this box. On 2026-10-21 a host
+# advertising 857 Mbps up delivered 0.2 Mbps to Sweden -- 49h for one run's
+# checkpoints. Uploads from that same box to Cloudflare ran at 31-39 Mbps and
+# downloads INTO it at 54, so neither the listing, DLPerf, nor a download test
+# would have caught it. The only number that matters is bytes per second from
+# the box to the machine that will hold the results.
+#
+# This runs inside `check`, before anything is installed. It used to run after
+# the build, which is the wrong order: section 1 of the plan says egress is
+# measured first precisely so that a bad box is abandoned before it has cost
+# twenty minutes of rent.
+egress_test () {
+  say "egress: can we actually get results off this box?"
+  $SSH 'dd if=/dev/urandom of=/tmp/egress.bin bs=1M count=40 2>/dev/null'
+  local t0=$(date +%s)
+  $SSH -o Compression=no 'cat /tmp/egress.bin' > /tmp/egress_local.bin 2>/dev/null
+  local el=$(( $(date +%s) - t0 ))
+  local sz=$(wc -c < /tmp/egress_local.bin | tr -d ' ')
+  $SSH 'rm -f /tmp/egress.bin'; rm -f /tmp/egress_local.bin
+  awk -v sz="$sz" -v el="$el" 'BEGIN{
+    if (el < 1) el = 1;
+    mbps = sz*8/el/1000000;
+    printf "  %.0f MB in %ds = %.1f Mbps to here\n", sz/1048576, el, mbps;
+    gb = 4.4;
+    printf "  a run\x27s %.1f GB of checkpoints would take %.1f h at this rate\n", gb, gb*1024*8/mbps/3600;
+    if (mbps < 5)       print "  KILL CRITERION HIT (<5 Mbps) -- the results cannot come home. Take another offer.";
+    else if (mbps < 10) print "  below the 10 Mbps bar in section 1. Usable only if checkpoints are pulled inline.";
+    else if (mbps < 50) print "  passes, but pull checkpoints inline rather than at the end.";
+    else                print "  fine.";
+  }'
+}
+
 
 say "what we rented"
 $SSH 'nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
@@ -54,7 +88,12 @@ CONC=${CONC:-$CORES}
 [ "$CONC" -gt 16 ] && CONC=16
 echo "cores: $CORES (cgroup, not nproc)  ->  concurrency $CONC"
 echo "  $CONC active searches, $((CONC*2)) processes ($((CONC)) idle awaiting their turn)"
-[ "$MODE" = "check" ] && { echo; echo "check only; nothing installed."; exit 0; }
+if [ "$MODE" = "check" ]; then
+  egress_test
+  echo
+  echo "check only; nothing installed."
+  exit 0
+fi
 
 # The training A/B is GPU-bound, so unlike the match sweep it wants a fast card
 # and few cores. `probe` measures the real per-generation cost of both arms
@@ -101,32 +140,91 @@ REMOTE
 scp -q -P "$PORT" $SSHOPTS /tmp/remote_setup.sh root@"$HOST":/tmp/
 $SSH "BASEPY='$BASEPY' bash /tmp/remote_setup.sh"
 
-# EGRESS TEST, before committing hours to this box. On 2026-10-21 a host
-# advertising 857 Mbps up delivered 0.2 Mbps to Sweden -- 49h for one run's
-# checkpoints. Uploads from that same box to Cloudflare ran at 31-39 Mbps and
-# downloads INTO it at 54, so neither the listing, DLPerf, nor a download test
-# would have caught it. The only number that matters is bytes per second from
-# the box to the machine that will hold the results.
-say "egress: can we actually get results off this box?"
-$SSH 'dd if=/dev/urandom of=/tmp/egress.bin bs=1M count=40 2>/dev/null'
-EGT0=$(date +%s)
-$SSH -o Compression=no 'cat /tmp/egress.bin' > /tmp/egress_local.bin 2>/dev/null
-EGEL=$(( $(date +%s) - EGT0 ))
-EGSZ=$(wc -c < /tmp/egress_local.bin | tr -d ' ')
-$SSH 'rm -f /tmp/egress.bin'; rm -f /tmp/egress_local.bin
-awk -v sz="$EGSZ" -v el="$EGEL" 'BEGIN{
-  if (el < 1) el = 1;
-  mbps = sz*8/el/1000000;
-  printf "  %.0f MB in %ds = %.1f Mbps to here\n", sz/1048576, el, mbps;
-  gb = 4.4;
-  printf "  a run\x27s %.1f GB of checkpoints would take %.1f h at this rate\n", gb, gb*1024*8/mbps/3600;
-  if (mbps < 5)       print "  UNUSABLE -- pull checkpoints inline or take another offer.";
-  else if (mbps < 50) print "  slow; pull checkpoints inline rather than at the end.";
-  else                print "  fine.";
-}'
+egress_test
 
 say "smoke test"
 $SSH 'cd ~/chessbot && printf "uci\nquit\n" | .venv/bin/chess-uci --run ~/chessbot/runs/champ 2>&1 | grep -E "^id name|Device"'
+
+if [ "$MODE" = "measure" ]; then
+  # Section 1 of docs/rented-training-plan.md, scripted end to end so the box is
+  # never idle while someone decides what to run next. ONE card; `probe` is the
+  # two-card A/B and is a different question.
+  #
+  # Order matters and is the plan's: egress (already run above), real core
+  # count (already printed above), driver ceiling, then the generation profile
+  # across precisions, then the batch sweep. Each phase prints the threshold it
+  # is read against, so the decision is made against what was written down
+  # rather than against how much has already been spent.
+  say "section 1.3/1.4: driver ceiling, network excluded"
+  $SSH "cd ~/chessbot && . \$HOME/.cargo/env && \
+    cargo build --release -p az-core --bin drivercost 2>&1 | tail -1 && \
+    for t in 1 2 4 8; do
+      ./target/release/drivercost --sims 32 --concurrency 512 --games 2048 --threads \$t \
+        | grep -E 'evals/sec \(|games/sec' | sed \"s/^/  threads \$t  /\"
+    done"
+  echo "  Jupiter, one thread: 292,646 evals/s."
+  echo "  KILL CRITERION: single-thread < 120,000 evals/s and the core is too slow"
+  echo "  for the driver whatever card is bolted to it."
+
+  say "section 1.7: all four precision regimes"
+  # The whole hardware ranking turns on this. TF32 is worth nothing on a GeForce
+  # card and 7.4x on an H100, and torch turns TF32 convolutions on by DEFAULT --
+  # so "default" is what every previous CUDA measurement actually ran, and
+  # "strict" is the only honest fp32. The profiler prints the flags torch reports
+  # back, not the ones it was asked for.
+  for prec in strict default tf32 bf16; do
+    echo "  --- $prec ---"
+    $SSH "cd ~/chessbot && .venv/bin/python bench/generation_profile.py \
+      --device cuda --games 256 --concurrency 256 --sims 32 --considered 32 \
+      --steps 250 --precision $prec --driver-threads ${DT:-4}" \
+      > /tmp/prof-$prec.txt 2>&1
+    grep -E 'precision:|gpu:|generation total|GPU-bound|driver seconds|inference throughput' \
+      /tmp/prof-$prec.txt | sed 's/^/    /'
+  done
+
+  say "section 1.6: torch.compile on CUDA, on and off"
+  for flag in "" "--compile"; do
+    $SSH "cd ~/chessbot && .venv/bin/python bench/generation_profile.py \
+      --device cuda --games 256 --concurrency 256 --sims 32 --considered 32 \
+      --steps 250 --precision default --driver-threads ${DT:-4} $flag" \
+      2>&1 | grep -E 'compile=|generation total' | sed 's/^/    /'
+  done
+  echo "  worth 1.36x on Jupiter; CUDA compile times are longer."
+
+  say "section 1.8: batch sweep -- compute-bound or bandwidth-bound?"
+  # The measurement that separates the two regimes the plan cannot choose
+  # between. Still climbing at the top  -> launch-bound, raise concurrency.
+  # Same plateau in both precisions     -> bandwidth-bound, and the big cards'
+  #                                        tensor peaks are unreachable.
+  # bf16 lifts the plateau              -> compute-bound, tensor cores pay.
+  for prec in strict bf16; do
+    echo "  --- $prec ---"
+    $SSH "cd ~/chessbot && .venv/bin/python bench/generation_profile.py \
+      --device cuda --precision $prec --sweep 256,512,1024,2048,4096" \
+      2>&1 | tail -12 | sed 's/^/    /'
+  done
+
+  say "read it against what was declared"
+  cat <<'THRESH'
+  Jupiter is 97.0 s/generation, 37.1 generations/hour.
+
+  WORTH RENTING if, in the best precision regime that passes a quality check:
+    generations/hour  >= 3.0x Jupiter  (>= 111/h, i.e. <= 32.3 s/generation)
+    GPU-bound fraction >= 65%
+    egress            >= 10 Mbps
+  KILLS IT if:
+    generations/hour  <  2.0x Jupiter  (>= 48.5 s/generation)
+    GPU-bound fraction <  50%
+    egress            <  5 Mbps
+    drivercost 1-thread < 120,000 evals/s
+
+  bf16 is a SPEED number only until a loss curve and a match say otherwise
+  (section 1.9). Do not read a bf16 result against the thresholds before then.
+THRESH
+  echo
+  echo "measurement only; nothing launched. Destroy this instance when done."
+  exit 0
+fi
 
 if [ "$MODE" = "probe" ]; then
   say "does this card actually have kernels, or will it JIT?"

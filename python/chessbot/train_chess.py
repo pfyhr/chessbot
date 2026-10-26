@@ -81,6 +81,7 @@ def selfplay_generation(net, device: str, args, seed: int, infer=None):
         pcr_prob=args.pcr_prob,
         fast_sims=args.fast_sims,
         fast_considered=args.fast_considered,
+        threads=args.driver_threads,
     )
 
     step = args.batch_bucket
@@ -162,6 +163,10 @@ def main() -> None:
                          "measured against rather than assumed worse")
     ap.add_argument("--games", type=int, default=256)
     ap.add_argument("--concurrency", type=int, default=256)
+    ap.add_argument("--driver-threads", type=int, default=1,
+                    help="self-play driver threads, sharded by game. The seed "
+                         "reproduces the same games at any value, so this is a "
+                         "speed knob and not an experimental arm.")
     ap.add_argument("--sims", type=int, default=32)
     ap.add_argument("--considered", type=int, default=16)
     # 400, not 200: at 200 nearly half of all games ran out of plies and 55% of

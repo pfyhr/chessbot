@@ -267,8 +267,13 @@ impl PyChessSelfPlay {
     ///
     /// `fast_considered` must not exceed `fast_sims`, or contenders beyond the
     /// budget never receive a single visit.
+    ///
+    /// `threads` shards the games across that many driver threads. It changes
+    /// throughput and nothing else: a seed reproduces the same games at any
+    /// thread count, which `az_core::selfplay` asserts in its own tests.
     #[pyo3(signature = (concurrency, total_games, sims=32, max_considered=16, max_plies=240, seed=0,
-                        pcr_prob=0.0, fast_sims=8, fast_considered=8))]
+                        pcr_prob=0.0, fast_sims=8, fast_considered=8, threads=1))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         concurrency: usize,
         total_games: usize,
@@ -279,6 +284,7 @@ impl PyChessSelfPlay {
         pcr_prob: f32,
         fast_sims: u32,
         fast_considered: usize,
+        threads: usize,
     ) -> Self {
         let cfg = Config {
             sims,
@@ -293,11 +299,19 @@ impl PyChessSelfPlay {
                 ..Config::default()
             },
         });
+        let mut inner = SelfPlay::with_pcr(concurrency, total_games, cfg, max_plies, seed, pcr);
+        inner.set_threads(threads);
         Self {
-            inner: SelfPlay::with_pcr(concurrency, total_games, cfg, max_plies, seed, pcr),
+            inner,
             obs: Vec::new(),
             batch: 0,
         }
+    }
+
+    /// Driver threads actually in use, after clamping to the slot count.
+    #[getter]
+    fn threads(&self) -> usize {
+        self.inner.threads()
     }
 
     /// Step every live game to its next leaf; `None` once all games are done.

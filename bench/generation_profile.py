@@ -22,6 +22,7 @@ saturate a 3090, and an idle GPU is still billed.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import time
 
 import chessbot_core as cc
@@ -29,6 +30,53 @@ import numpy as np
 import torch
 
 from chessbot.net import Net, wdl_to_scalar
+
+
+# What "fp32" actually means on CUDA, which is not what it sounds like.
+#
+# torch does not default to one precision. `cuda.matmul.allow_tf32` is False,
+# but `cudnn.allow_tf32` is TRUE, and this net is almost all convolution. So a
+# CUDA run that sets nothing has been doing TF32 convolutions and fp32 matmuls
+# -- a mix, labelled fp32 by whoever wrote it down. Any ranking of cards by
+# "fp32 peak" rests on that label being true, so the label has to be checked.
+#
+#   strict   TF32 off everywhere. The only honest fp32.
+#   default  whatever this torch ships. What every past measurement actually ran.
+#   tf32     TF32 on everywhere.
+#   bf16     TF32 on, plus bf16 autocast for forward and backward.
+PRECISIONS = ("strict", "default", "tf32", "bf16")
+
+
+def set_precision(mode: str, device: str):
+    """Pin the numerics and return `(autocast_dtype, what_took_effect)`.
+
+    Reports the flags as torch reports them afterwards, not as they were asked
+    for: a setting that silently does not apply on this build is exactly the
+    failure this is here to catch.
+    """
+    amp = None
+    if device == "cuda":
+        if mode == "strict":
+            torch.backends.cuda.matmul.allow_tf32 = False
+            torch.backends.cudnn.allow_tf32 = False
+        elif mode in ("tf32", "bf16"):
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+        if mode == "bf16":
+            amp = torch.bfloat16
+        effective = (f"matmul.allow_tf32={torch.backends.cuda.matmul.allow_tf32} "
+                     f"cudnn.allow_tf32={torch.backends.cudnn.allow_tf32}")
+    else:
+        if mode == "bf16":
+            amp = torch.bfloat16
+        effective = "n/a off CUDA"
+    return amp, effective
+
+
+def autocast(device: str, amp):
+    if amp is None:
+        return contextlib.nullcontext()
+    return torch.autocast(device_type=device, dtype=amp)
 
 
 def sync(device: str) -> None:
@@ -53,6 +101,7 @@ def profile_selfplay(net, device: str, args) -> dict:
         max_considered=args.considered,
         max_plies=args.max_plies,
         seed=12345,
+        threads=args.driver_threads,
     )
     t_gpu = t_driver = 0.0
     evals = 0
@@ -65,7 +114,7 @@ def profile_selfplay(net, device: str, args) -> dict:
             break
 
         a = time.perf_counter()
-        with torch.no_grad():
+        with torch.no_grad(), autocast(device, args.amp):
             logits, wdl = net(torch.from_numpy(obs).to(device))
             values = wdl_to_scalar(wdl.float()).cpu().numpy()
         sync(device)
@@ -108,17 +157,24 @@ def profile_training(net, device: str, args, samples: int) -> float:
     zt = torch.randint(0, 3, (args.batch,), device=device)
 
     for _ in range(3):  # warm up allocator and autotuner
-        p, v = net(x)
-        (-(pt * torch.log_softmax(p, -1)).sum(-1).mean()
-         + torch.nn.functional.cross_entropy(v, zt)).backward()
+        with autocast(device, args.amp):
+            p, v = net(x)
+            loss = (-(pt * torch.log_softmax(p.float(), -1)).sum(-1).mean()
+                    + torch.nn.functional.cross_entropy(v.float(), zt))
+        loss.backward()
         opt.zero_grad(set_to_none=True)
     sync(device)
 
     t0 = time.perf_counter()
     for _ in range(args.steps):
-        p, v = net(x)
-        loss = (-(pt * torch.log_softmax(p, -1)).sum(-1).mean()
-                + torch.nn.functional.cross_entropy(v, zt))
+        with autocast(device, args.amp):
+            p, v = net(x)
+            # The losses stay in fp32 under bf16 autocast: a log_softmax over
+            # 4672 logits in bf16 has about three significant digits, which is
+            # a quality change rather than a speed one, and this is measuring
+            # speed.
+            loss = (-(pt * torch.log_softmax(p.float(), -1)).sum(-1).mean()
+                    + torch.nn.functional.cross_entropy(v.float(), zt))
         opt.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
@@ -135,7 +191,7 @@ def report(sp: dict, train_s: float, args, device: str) -> None:
 
     print(f"\n{'=' * 62}")
     print(f"generation profile  device={device}  concurrency={args.concurrency}  "
-          f"games={args.games}  sims={args.sims}")
+          f"games={args.games}  sims={args.sims}  driver-threads={args.driver_threads}")
     print("=" * 62)
     print(f"{'self-play, network forward':34s} {sp['gpu']:7.1f}s")
     print(f"{'self-play, Rust driver + bridge':34s} {sp['driver']:7.1f}s")
@@ -146,6 +202,12 @@ def report(sp: dict, train_s: float, args, device: str) -> None:
     print(f"{'GPU-bound fraction':34s} {f:7.1%}")
     print(f"{'inference throughput':34s} {sp['pos_per_sec']:7,.0f} pos/sec")
     print(f"{'positions produced':34s} {sp['samples']:7,d}")
+    # The number that transfers between machines. Wall clock does not: it is
+    # dominated by whichever GPU happens to be attached. Driver seconds are the
+    # CPU's half of the generation, and they are what decides whether a rented
+    # card would idle.
+    print(f"{'driver seconds per generation':34s} {non_gpu:7.1f}s  "
+          f"({non_gpu / gen:.0%} of wall clock)")
 
     print(f"\nAmdahl: what a faster GPU would actually buy at this fraction")
     for s in (2, 4, 6, 10):
@@ -161,6 +223,8 @@ def main() -> None:
     ap.add_argument("--games", type=int, default=64,
                     help="fewer than a real generation; the split is what matters")
     ap.add_argument("--concurrency", type=int, default=256)
+    ap.add_argument("--driver-threads", type=int, default=1,
+                    help="self-play driver threads, sharded by game")
     ap.add_argument("--sims", type=int, default=32)
     ap.add_argument("--considered", type=int, default=32)
     ap.add_argument("--max-plies", type=int, default=400)
@@ -170,26 +234,33 @@ def main() -> None:
     ap.add_argument("--channels", type=int, default=96)
     ap.add_argument("--sweep", default=None,
                     help="comma-separated concurrencies; reports inference throughput only")
+    ap.add_argument("--precision", choices=PRECISIONS, default="default",
+                    help="numerics for forward and training; see PRECISIONS")
     ap.add_argument("--tf32", action="store_true",
-                    help="CUDA only: allow TF32 matmuls, off by default in torch")
+                    help="deprecated alias for --precision tf32")
+    ap.add_argument("--compile", action="store_true",
+                    help="torch.compile the net, as training does by default")
     args = ap.parse_args()
+    if args.tf32:
+        args.precision = "tf32"
 
     device = args.device
     if device == "auto":
         device = ("mps" if torch.backends.mps.is_available()
                   else "cuda" if torch.cuda.is_available() else "cpu")
-    if args.tf32 and device == "cuda":
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
+    args.amp, effective = set_precision(args.precision, device)
 
     planes, h, w = cc.OBS_SHAPE
     net = Net(planes, (h, w), cc.POLICY_LEN, args.blocks, args.channels).to(device)
     params = sum(p.numel() for p in net.parameters())
+    if args.compile:
+        net = torch.compile(net)
     print(f"torch {torch.__version__}  device={device}  net={args.blocks}x{args.channels} "
-          f"({params / 1e6:.2f}M params)"
-          + (f"  tf32=on" if args.tf32 and device == "cuda" else ""))
+          f"({params / 1e6:.2f}M params)  compile={args.compile}")
+    print(f"precision: {args.precision}  ->  {effective}  autocast={args.amp}")
     if device == "cuda":
-        print(f"gpu: {torch.cuda.get_device_name(0)}")
+        pr = torch.cuda.get_device_properties(0)
+        print(f"gpu: {pr.name}  sm_{pr.major}{pr.minor}  {pr.total_memory / 2**30:.0f} GiB")
 
     if args.sweep:
         x = None
@@ -198,7 +269,7 @@ def main() -> None:
         for b in (int(v) for v in args.sweep.split(",")):
             x = torch.randn(b, planes, h, w, device=device)
             net.eval()
-            with torch.no_grad():
+            with torch.no_grad(), autocast(device, args.amp):
                 for _ in range(5):
                     net(x)
                 sync(device)

@@ -8,6 +8,13 @@
 //!
 //! If that ceiling sits below what a rented accelerator can consume, the
 //! accelerator idles and the money is wasted. The fix is threading, not hardware.
+//!
+//! `--threads K` runs the driver on K threads sharded by game. Sweep it to find
+//! out how much of the ceiling is a property of the code rather than the core:
+//!
+//! ```text
+//! for t in 1 2 4 8; do ./target/release/drivercost --threads $t; done
+//! ```
 
 use az_core::chess::ChessPos;
 use az_core::game::{obs_len, Game};
@@ -26,11 +33,7 @@ fn main() {
     let games: usize = flag(&args, "--games").unwrap_or(512);
     let considered: usize = flag(&args, "--considered").unwrap_or(16);
     let plies: usize = flag(&args, "--plies").unwrap_or(300);
-
-    println!(
-        "Self-play driver ceiling, single-threaded, network excluded\n\
-         chess  sims {sims}  concurrency {concurrency}  games {games}\n"
-    );
+    let threads: usize = flag(&args, "--threads").unwrap_or(1);
 
     let cfg = Config {
         sims,
@@ -38,6 +41,12 @@ fn main() {
         ..Config::default()
     };
     let mut sp = SelfPlay::<ChessPos>::new(concurrency, games, cfg, plies, 0xC0FFEE);
+    let threads = sp.set_threads(threads);
+
+    println!(
+        "Self-play driver ceiling, network excluded\n\
+         chess  sims {sims}  concurrency {concurrency}  games {games}  threads {threads}\n"
+    );
 
     let obs = obs_len::<ChessPos>();
     let mut buf = Vec::with_capacity(concurrency * obs);
@@ -75,13 +84,18 @@ fn main() {
     println!();
     println!(
         "{:<26} {:>14.0}",
-        "evals/sec (one thread)",
+        format!("evals/sec ({threads} thread{})", if threads == 1 { "" } else { "s" }),
         evals as f64 / secs
     );
     println!(
         "{:<26} {:>14.2}",
-        "games/sec (one thread)",
+        "games/sec",
         sp.games_completed() as f64 / secs
+    );
+    println!(
+        "{:<26} {:>14.0}",
+        "evals/sec per thread",
+        evals as f64 / secs / threads as f64
     );
     println!("{:<26} {:>14.1}", "us per eval", secs * 1e6 / evals as f64);
     println!();
