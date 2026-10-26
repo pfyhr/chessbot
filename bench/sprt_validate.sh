@@ -44,6 +44,7 @@ run () {  # label, nodesA, nodesB, seed, expected
       name=B option.Generation=695 option.RootActions=32 nodes=$nb \
     -sprt elo0=$ELO0 elo1=$ELO1 alpha=$ALPHA beta=$BETA model=$MODEL \
     -rounds $CAP -games 2 -concurrency $CONC -srand $seed \
+    -config discard=true \
     -openings file=$R/bench/openings-4ply.epd format=epd order=random \
     -log file=/dev/null > $raw 2>&1
   local games llr res elo

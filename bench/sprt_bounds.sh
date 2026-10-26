@@ -39,6 +39,7 @@ duel () {  # label, ra_a, ra_b, nodes, seed, expect
       name=base option.Generation=695 option.RootActions=$rb nodes=$nd \
     -sprt elo0=0 elo1=$E1 alpha=0.05 beta=0.05 model=logistic \
     -rounds $CAP -games 2 -concurrency $CONC -srand $seed \
+    -config discard=true \
     -openings file=$R/bench/openings-4ply.epd format=epd order=random \
     -log file=/dev/null > $raw 2>&1
   {

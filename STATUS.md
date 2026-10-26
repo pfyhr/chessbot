@@ -1,20 +1,45 @@
 # Status
 
-_Last updated 2026-10-19. **Nothing is running locally; a 12h two-GPU rental is
-the next thing to book.**_
+_Last updated 2026-10-26. **Nothing is running locally — Jupiter is free for
+other work.** Next step is `docs/root-width-plan.md`, steps 1 and 2, which are
+free and take about an hour._
 
-## Queued — do after `runs/long-oct` finishes (~Sun 25 Oct 22:32 CEST)
+## 2026-10-26 — long-oct finished, and the probes were wrong about it
 
-**Confirm that `torch.compile` is why generations got 1.5x faster.**
-`bench/compile_ab.sh` is written and ready; it refuses to start while training
-is live, because a timing test run under contention measures the contention.
+`runs/long-oct`: 72.01 h, 2,601 generations from `runs/weekend/gen1371.pt`.
 
-`runs/long-oct` averages 95s/generation. The 2026-09-20 weekend run, same
-config and same mean game length (~130 plies), averaged 141s and was flat at
-138-143s across all 1,372 of its generations — so the speedup is not a warm-up
-or game-length artifact. It is software: newer torch, `torch.compile` on by
-default, and bridge work in between. The script isolates the compile half with
-alternating A-B blocks run sequentially, and records the torch version.
+**It gained +144.92 +/- 50.73 Elo** (218 fixed-length games, 128 nodes).
+Its own probes said it gained nothing: `vs_prev` sat at 0.500 all run,
+`vs_random` drifted inside its noise, and `mate`/`defend`/`tactics` all fell by
+a quarter to a half. Every one of those readings is explicable and none of them
+means stagnation -- see
+`bench/results/2026-10-26-long-oct-the-probes-were-wrong.md`.
+
+Two numbers needed correcting on the way, both in the same direction:
+- SPRT reported +249.30 on 52 games; 218 fixed-length games gave +144.92.
+  SPRT stops at a boundary crossing and its point estimate is biased upward.
+  **SPRT decides, fixed length publishes.**
+- A diagnosis of "self-distillation fixed point" was written from the probes
+  before the games were run, and the games refuted it.
+
+**`torch.compile` is worth 1.36x** (97.0 against 131.9 s/gen, four alternating
+blocks), about 75% of the 1.48x gap to the September weekend run --
+`bench/results/2026-10-26-compile-is-most-of-the-speedup.md`.
+
+**The search wastes most of its budget.** At `--sims 32 --considered 32`,
+Sequential Halving needs `n >= m*log2(m)` = 160 and has 32, so phase one
+consumes everything and no halving ever runs. Measured depth 1.57 ply; at
+`--considered 8` all three phases fit and depth is 2.58. Plan in
+`docs/root-width-plan.md`.
+
+## Open and cheap
+
+- **The 1-node match**, ~10 minutes: is the raw policy actually weaker, or are
+  the probes just off-distribution? `bench/long_oct_fixed.sh`, second duel.
+- **`c_scale` is 0.1 where the paper uses 1.0**, so the search moves the
+  training target about a tenth as much as intended. Not a CLI flag yet.
+- **`chess_eval.py:213` hardcodes `max_considered=16`**, so the in-training
+  search probe has never matched the trained `--considered`.
 
 ## 2026-10-21 — self-play search: better per game, barely better per hour
 
