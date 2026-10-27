@@ -31,6 +31,8 @@ import torch.nn.functional as F
 
 from chessbot.net import load_checkpoint, net_from_checkpoint
 
+from _provenance import provenance
+
 PLANES, BOARD, POLICY = 119, (8, 8), 4672
 
 
@@ -125,7 +127,7 @@ def main() -> None:
     params = sum(p.numel() for p in net.parameters())
     _, _, meta = load_checkpoint(args.checkpoint, "cpu")
     manifest = {
-        "checkpoint": str(args.checkpoint),
+        "checkpoint": provenance(args.checkpoint),
         "gen": meta.get("gen"),
         "run": args.checkpoint.parent.name,
         "sha256": sha256(args.out),

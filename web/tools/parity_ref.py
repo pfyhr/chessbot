@@ -37,6 +37,8 @@ import torch
 import chessbot_core as cc
 from chessbot.net import net_from_checkpoint
 
+from _provenance import provenance
+
 PLANES, BOARD, POLICY = 119, (8, 8), 4672
 
 
@@ -205,7 +207,7 @@ def main() -> None:
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps({
-        "checkpoint": str(args.checkpoint),
+        "checkpoint": provenance(args.checkpoint),
         "arch": arch,
         "ship_model": ship.name,
         "planes": PLANES, "policy_len": POLICY,
