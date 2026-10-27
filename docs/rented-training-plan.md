@@ -169,10 +169,15 @@ Measure, in this order, stopping early if a threshold below is missed:
 3. **`drivercost`, single-threaded**, the same invocation as
    `bench/results/2026-08-20-driver-ceiling.md`:
    `./target/release/drivercost --sims 32 --concurrency 512 --games 4096`.
-   Jupiter: 292,646 evals/s. This one number predicts most of the rest.
-4. **`drivercost` multi-threaded**, for the record. Expect no gain — the
-   driver is sequential by design and rayon measured *slower* — but it costs
-   a minute and settles whether a high core count is worth paying for.
+   Jupiter: **314,542 evals/s** (re-measured 2026-10-26; the 292,646 in that
+   write-up predates the slot-local restructuring). This one number predicts
+   most of the rest, and with threading ruled out it is now the *only* driver
+   lever the box offers.
+4. **`drivercost --threads 1 2 4 8`**, for the record, and it costs a minute.
+   On Jupiter this peaks at **1.27× on 4 threads and regresses on 8**, and that
+   gain vanished entirely once a real evaluator was attached, so the expectation
+   is no usable gain. Run it anyway: if a rented box *does* scale here, that is
+   the one circumstance in which `--driver-threads` becomes worth re-testing.
 5. **Generation profile** at the long run's settings, which is the only number
    that decides anything:
    `bench/generation_profile.py --device cuda --games 256 --steps 250`.
@@ -263,14 +268,15 @@ only way to find out whether tensor cores are reachable at this net size. Two
 boxes for an hour each is under $5 and answers a question that a week of
 arithmetic cannot.
 
-**Select on single-thread CPU first, core count second.** Prefer a listed CPU
-with a high base clock: the driver's per-game work is sequential whatever the
-thread count, and a slow core is a slow core on every one of them. Core count
-now matters as well — it did not when the driver was single-threaded — but only
-up to whatever `bench/driver_threads.sh` measured as the point where the
-sharded driver stops scaling. Pay for cores up to that number and not beyond.
+**Select on single-thread CPU, essentially only.** Prefer a listed CPU with a
+high base clock: the driver's per-game work is sequential whatever the thread
+count, and a slow core is a slow core on every one of them. An earlier draft of
+this paragraph said core count "now matters as well" because the sharded driver
+was about to land — **it was measured on 2026-10-26 and does not scale**, so
+that is withdrawn. Do not pay a premium for cores on the driver's account.
 Vast allocates cores in proportion to GPUs in any case, and fastchess matches
-(a separate job) scale with them too.
+(a separate job) do scale with them, which is the only remaining reason to
+care.
 
 The 1.2× headroom figure in `2026-08-20-driver-ceiling.md` — driver 292,646
 evals/s against an estimated 237,000 a 4090 can consume — carries two
@@ -341,9 +347,11 @@ rental**. At the H100's bf16 row it is **92%**: the card does its share in 1.7
 seconds and waits eighteen.
 
 This is the one row of the analysis that no precision question touches, because
-every precision win makes it *worse*. It is the argument for doing
-game-granularity parallelism first — which is now in the tree, measured by
-`bench/driver_threads.sh`, and whose result replaces the 18.7 s above.
+every precision win makes it *worse*. It was the argument for doing
+game-granularity parallelism first — which was done and measured on 2026-10-26,
+and **bought nothing**, so the 18.7 s above stands as a single-threaded figure.
+The driver share is not going to be engineered away before the rental; it is a
+constraint to rent around.
 
 ## 4. What changes in the code
 
@@ -361,10 +369,26 @@ Less than expected — `--device auto` already resolves CUDA
 * **bf16.** Only if §1.7 says it earns anything *and* §1.9 says it costs
   nothing. It bought 1.03–1.05× on MPS, and the roofline says the big cards
   cannot reach their bf16 peak at this net size anyway.
-* **Driver threads.** `--driver-threads K` shards the self-play games across K
-  threads. A seed reproduces the same games at any K (asserted in
+* **Driver threads — present, off, and measured at zero.**
+  `--driver-threads K` shards the self-play games across K threads, defaulting
+  to **1 (off)**. A seed reproduces the same games at any K (asserted in
   `az_core::selfplay`'s tests), so it is a speed knob and not an experimental
-  arm. This is the change that moves the rows above, and it is free.
+  arm, and leaving it at 1 changes nothing about what a run produces.
+
+  It was expected to move the rows above. **It does not.** On Jupiter,
+  2026-10-26: 1.27× on the driver in isolation, +0.5% ± 9.8% on a real
+  generation — nothing — and driver seconds per generation flat at 6.4 / 5.9 /
+  6.1 s for 1 / 2 / 4 threads
+  ([write-up](../bench/results/2026-10-26-driver-threads.md)). The code is kept
+  because it is correct, tested and free when off, not because it is expected to
+  pay.
+
+  **When to try it again:** only if a rented box's own measurements say the
+  driver is its limit — a GPU-bound fraction near or below the 50% kill line
+  with `drivercost --threads 1 2 4 8` showing real scaling on *that* CPU. Those
+  are two different machines' cache hierarchies, so Jupiter's zero does not
+  prove a rented zero. Absent both signals, leave it at 1 and do not spend
+  rental time on it.
 * **Data loading.** Observations go `numpy → torch.from_numpy(...).to(device)`
   every batch (`train_chess.py:123-129`). On CUDA that is a pageable host→device
   copy per tensor per step. Pinned memory and `non_blocking=True` are the
