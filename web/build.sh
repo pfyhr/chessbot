@@ -52,7 +52,13 @@ cp "$WEB/index.html" "$DIST/"
 cp "$WEB"/src/*.js "$WEB"/src/*.css "$DIST/src/"
 # The piece font. Six glyphs, 1.7 KB -- see the @font-face note in
 # style.css for why the board cannot rely on system fallback.
-cp "$WEB"/src/chess-pieces.woff2 "$DIST/src/"
+#
+# The licence ships with it, and this is not optional tidiness: the OFL
+# requires the copyright notice and licence to travel with the font, in
+# original or modified form, and this font is modified -- subset to six
+# glyphs with rewritten vertical metrics. Shipping the woff2 alone would
+# put the deployed site out of compliance. Do not drop this line.
+cp "$WEB"/src/chess-pieces.woff2 "$WEB"/src/chess-pieces.OFL.txt "$DIST/src/"
 cp "$REPO/target/wasm32-unknown-unknown/release/az_wasm.wasm" "$DIST/"
 
 say "ONNX Runtime"

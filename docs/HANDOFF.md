@@ -68,6 +68,9 @@ an H100 and nothing on a GeForce card, and PyTorch enables it by itself).
   logs still contain it**. Scrubbing published history on a public repo is
   disruptive — Pontus's call, not started.
 * `?backend=webgpu` is untested surface: CI runners have no GPU.
+* Wanted, not needed: **our own piece glyphs**, six SVG paths instead of a
+  subset of Noto Sans Symbols 2. Would drop the font licence from the deploy
+  and read better at promotion-picker size. Nothing waits on it.
 * Still open and cheap, from `STATUS.md`: `c_scale` is 0.1 where the paper uses
   1.0, and `chess_eval.py:213` hardcodes `max_considered=16`.
 
