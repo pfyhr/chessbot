@@ -379,9 +379,14 @@ for (const mate of MATES) {
 // pieces so they survive a light square. Penalising that rim meant failing
 // the board for working as intended.
 {
-  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  // deviceScaleFactor 3, like the phone this is about. At dpr 1 a 44.5px
+  // square quantises the ink margins to whole pixels, and the rounding is not
+  // symmetric -- it read -4.1% on a board measuring -2.1% at dpr 3, which is
+  // the measurement being coarse rather than the board being off.
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3 });
   await page.goto(base, { waitUntil: "domcontentloaded" });
   await page.waitForSelector("#app:not(.hidden)", { timeout: 120_000 });
+  await page.addStyleTag({ content: ".sq::before,.sq::after{content:none !important}" });
   await page.evaluate(() => document.fonts.ready);
 
   const face = await page.evaluate(() =>
@@ -431,6 +436,79 @@ for (const mate of MATES) {
       else lines[lines.length - 1] += `/${score >= 0 ? "+" : ""}${(score * 100).toFixed(0)}`;
     }
   }
+  // --- and they sit in the middle of their squares ------------------------
+  //
+  // Noto's vertical metrics are built for a line of text: the box centre lands
+  // 0.14em above the glyphs' own centre, so every piece rode high -- about
+  // 3px on a 45px phone square, which is what Pontus saw. The fix is baked
+  // into the font by tools/make_piece_font.sh, and the @font-face carries NO
+  // unicode-range, because a range excludes the strut and hands baseline
+  // placement back to `serif`, making the font's metrics inert. Both of those
+  // are invisible from the CSS, so they are measured here.
+  //
+  // Cropped out of ONE board screenshot: an element screenshot comes back a
+  // pixel or two larger than the element, which pulls the board's own border
+  // in at the outer squares and reads as ink.
+  {
+    const board = await page.evaluate(() => {
+      const b = document.querySelector(".sq").parentElement;
+      b.setAttribute("data-probe-board", "1");
+      const r = b.getBoundingClientRect();
+      return { x: r.x, y: r.y };
+    });
+    const shot = PNG.sync.read(await page.locator("[data-probe-board]").screenshot());
+    const dpr = 3;  // matches the deviceScaleFactor above
+    const squares = ["a8","b8","c8","d8","e8","f8","g8","h8","a7","d7",
+                     "a2","d2","a1","b1","c1","d1","e1","h1"];
+    const rects = await page.evaluate((qs) => Object.fromEntries(qs.map((q) => {
+      const r = document.querySelector(`.sq[data-square='${q}']`).getBoundingClientRect();
+      return [q, { x: r.x, y: r.y, w: r.width, h: r.height }];
+    })), squares);
+
+    // 6 device px in from each edge, to clear the board's own border. At 2 the
+    // border bled in at the outer squares and read as ink (-9.5% on a board
+    // measuring -2.1%); 3 through 8 all give the same answer, so this is clear
+    // of the cliff rather than balanced on it. Real glyph margin is ~24 device
+    // px, so 6 cannot reach the piece.
+    const INSET = 6;  // device px, to clear the board's own border
+    const diffs = [];
+    for (const q of squares) {
+      const r = rects[q];
+      const x0 = Math.round((r.x - board.x) * dpr), y0 = Math.round((r.y - board.y) * dpr);
+      const w = Math.round(r.w * dpr), h = Math.round(r.h * dpr);
+      let top = -1, bot = -1;
+      for (let y = INSET; y < h - INSET; y++) {
+        let hit = false;
+        for (let x = Math.max(INSET, Math.floor(w * 0.18)); x < Math.min(w - INSET, Math.ceil(w * 0.82)); x++) {
+          const px = x0 + x, py = y0 + y;
+          if (px < 0 || py < 0 || px >= shot.width || py >= shot.height) continue;
+          const i = (py * shot.width + px) * 4;
+          const L = 0.2126 * shot.data[i] + 0.7152 * shot.data[i + 1] + 0.0722 * shot.data[i + 2];
+          if (L < 60 || L > 210) { hit = true; break; }
+        }
+        if (hit) { if (top < 0) top = y; bot = y; }
+      }
+      if (top < 0) { fail(`pieces: no ink found on ${q} while checking centring`); continue; }
+      diffs.push(((top) - (h - 1 - bot)) / dpr);   // INSET cancels in the difference
+    }
+    const sqH = rects.d8.h;
+    const mean = diffs.reduce((a, b) => a + b, 0) / diffs.length;
+    const pct = mean / sqH * 100;
+    // 4% of a square. Measured either side of the fix, over these 18 squares:
+    //   before  webkit -4.4%  chromium -6.6%   (every piece high)
+    //   after   webkit +1.6%  chromium -2.1%
+    // so this sits roughly midway. If it ever trips, re-measure before moving
+    // it -- the last two thresholds in this file were both wrong, not unlucky.
+    if (Math.abs(pct) > 4) {
+      fail(`pieces: vertical centring off by ${pct.toFixed(1)}% of a square ` +
+           `(mean top-bottom ${mean >= 0 ? "+" : ""}${mean.toFixed(2)}px on ${sqH.toFixed(1)}px squares, ` +
+           `${mean < 0 ? "sitting high" : "sitting low"}) -- check the font's vertical metrics ` +
+           `and that @font-face has no unicode-range`);
+    }
+    console.log(`### centring: mean ${mean >= 0 ? "+" : ""}${mean.toFixed(2)}px ` +
+                `(${pct >= 0 ? "+" : ""}${pct.toFixed(1)}% of a ${sqH.toFixed(1)}px square)\n`);
+  }
+
   // All six glyphs are 1em in the bundled font, so any spread means something
   // fell back to a face that is not it.
   if (advances.size !== 1) {

@@ -106,13 +106,28 @@ section { background: var(--panel); border: 1px solid var(--line); border-radius
    Six glyphs of Noto Sans Symbols 2, subset to 1.7 KB, removes the question:
    there is no fallback to fall back to, no emoji form in the file, and all six
    advances are exactly 1em so the pieces are metrically identical by
-   construction. `unicode-range` keeps it off every other character on the
-   page. Licence: src/chess-pieces.OFL.txt (SIL OFL 1.1). Regenerate with
-   web/tools/make_piece_font.sh. */
+   construction. Licence: src/chess-pieces.OFL.txt (SIL OFL 1.1). Regenerate
+   with web/tools/make_piece_font.sh, which also centres the vertical metrics.
+
+   NO `unicode-range` HERE, deliberately, and it is not an oversight. It looks
+   like a tidy way to keep the face off the rest of the page -- but it also
+   excludes the STRUT, the invisible box that establishes the line box and the
+   baseline. The strut is not a chess character, so with a range set it falls
+   to `serif`, the baseline is placed by serif's metrics, and this font's
+   ascent and descent are never consulted. The pieces then sit wherever the
+   platform's serif puts them: on iOS, about 0.14em high in every square.
+   Measured both ways, 90px glyph in a 120px cell, top-minus-bottom margin:
+
+     with    unicode-range   centred metrics -6px   source metrics -6px
+     without unicode-range   centred metrics -2px   source metrics -26px
+
+   Identical in the first row because the font is doing nothing. Nothing else
+   on the page asks for "ChessPieces", and .piece only ever contains one chess
+   glyph, so the range was buying no isolation that the selector did not
+   already provide. */
 @font-face {
   font-family: "ChessPieces";
   src: url("chess-pieces.woff2") format("woff2");
-  unicode-range: U+265A-265F;
   font-display: block;  /* swapping mid-game would reflow every square */
 }
 
