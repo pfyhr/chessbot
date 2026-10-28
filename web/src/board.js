@@ -1,4 +1,4 @@
-// A chess board widget, with no dependencies and no image assets.
+// A chess board widget, with no dependencies and one asset: a 1.7 KB font.
 //
 // Pieces are the six solid Unicode glyphs (U+265A..U+265F) for *both* colours,
 // separated by fill and outline rather than by using the outlined code points.
@@ -6,6 +6,13 @@
 // are a different weight, or simply missing -- whereas the solid six are
 // reliable everywhere, and drawing white as "the same shape, inverted" makes
 // the two sets match by construction.
+//
+// "Reliable everywhere" turned out to be false for exactly one of them. U+265F
+// is the only chess symbol with a Unicode Emoji property, and iOS Safari drew
+// every pawn as the colour-emoji pawn -- ignoring `color`, so both sides' pawns
+// came out black. The six glyphs now ship as a subset font (see the @font-face
+// note in style.css); these code points no longer depend on what the platform
+// happens to have.
 //
 // The widget knows nothing about chess. It is told which squares hold what,
 // which moves are legal, and whose turn it is; it reports attempted moves.

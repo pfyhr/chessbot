@@ -50,6 +50,9 @@ say "static files"
 mkdir -p "$DIST/src" "$DIST/vendor/ort"
 cp "$WEB/index.html" "$DIST/"
 cp "$WEB"/src/*.js "$WEB"/src/*.css "$DIST/src/"
+# The piece font. Six glyphs, 1.7 KB -- see the @font-face note in
+# style.css for why the board cannot rely on system fallback.
+cp "$WEB"/src/chess-pieces.woff2 "$DIST/src/"
 cp "$REPO/target/wasm32-unknown-unknown/release/az_wasm.wasm" "$DIST/"
 
 say "ONNX Runtime"

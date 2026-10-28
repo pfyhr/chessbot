@@ -91,12 +91,38 @@ section { background: var(--panel); border: 1px solid var(--line); border-radius
 }
 .sq.check { background: radial-gradient(circle, var(--check) 0%, transparent 72%), var(--dark); }
 
+/* The piece glyphs ship with the page rather than being borrowed from the
+   system. U+265F BLACK CHESS PAWN is the one chess symbol Unicode gives an
+   Emoji property, and iOS Safari honours it: every pawn came out as the glossy
+   colour-emoji pawn, ignoring `color` and the rim below, while U+265A..265E
+   -- which have no emoji form -- rendered as text and took the styling. The
+   board was black pawns on both sides.
+
+   U+FE0E (text presentation) is the usual one-line answer and was measured
+   instead of assumed: a no-op in Chromium, but in WebKit it selects a
+   different font for that one glyph -- advance 20.90px -> 26.49px, 27% wider
+   than its own siblings. That trades an iOS bug for a desktop one.
+
+   Six glyphs of Noto Sans Symbols 2, subset to 1.7 KB, removes the question:
+   there is no fallback to fall back to, no emoji form in the file, and all six
+   advances are exactly 1em so the pieces are metrically identical by
+   construction. `unicode-range` keeps it off every other character on the
+   page. Licence: src/chess-pieces.OFL.txt (SIL OFL 1.1). Regenerate with
+   web/tools/make_piece_font.sh. */
+@font-face {
+  font-family: "ChessPieces";
+  src: url("chess-pieces.woff2") format("woff2");
+  unicode-range: U+265A-265F;
+  font-display: block;  /* swapping mid-game would reflow every square */
+}
+
 .piece {
   /* Fallback only; the container-query rule below is what actually applies.
      A viewport-relative size is wrong here because the board is one column of
      a two-column layout -- at 1080px the board is ~700px wide, so a square is
      ~87px while 8.4vw asks for 90px, and the piece is wider than the square it
      sits in. The glyph must be measured against the square, not the window. */
+  font-family: "ChessPieces", serif;
   font-size: min(8.4vw, 3.3rem);
   line-height: 1;
   cursor: default;

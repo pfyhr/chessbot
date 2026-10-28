@@ -20,6 +20,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { chromium, webkit } from "playwright";
+import { PNG } from "pngjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DIST = process.env.DIST ?? path.join(HERE, "..", "dist");
@@ -354,6 +355,66 @@ for (const mate of MATES) {
   if (await plies() !== mate.plies) fail(`${mate.name}: the engine moved after mate`);
   if (errors.length) fail(`${mate.name}: console errors: ${errors.slice(0, 3).join(" | ")}`);
   console.log(`  backend  ${r.backend}\n`);
+  await page.close();
+}
+
+// --- pieces are the colour they claim to be ------------------------------
+//
+// Added after a bug that every other gate passed: U+265F is the only chess
+// symbol with a Unicode Emoji property, and iOS Safari drew it as the colour
+// emoji -- ignoring `color`, so both sides' pawns rendered black on a board
+// whose geometry, parity and search were all verified. Nothing here looks at
+// glyphs; it measures ink, which is the only thing that would have caught it.
+//
+// The margin matters as much as the sign. Before the piece font landed, the
+// queen passed in Chromium and came out AMBIGUOUS in WebKit (dark 22.0% vs
+// light 14.8%) -- its thin spikes let the rim shadow eat proportionally more
+// of the glyph than a rook's. A 1.5x ratio is the line; the queen is still
+// the narrowest pass, so if this gate ever fails it will likely fail there
+// first.
+{
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.goto(base, { waitUntil: "domcontentloaded" });
+  await page.waitForSelector("#app:not(.hidden)", { timeout: 120_000 });
+  await page.evaluate(() => document.fonts.ready);
+
+  const face = await page.evaluate(() =>
+    [...document.fonts].filter((f) => f.family === "ChessPieces").map((f) => f.status));
+  if (face.length !== 1 || face[0] !== "loaded") {
+    fail(`pieces: ChessPieces font not loaded (${JSON.stringify(face)}) -- ` +
+         `the board is back on system fallback and U+265F may be an emoji again`);
+  }
+
+  const advances = new Set();
+  for (const [square, want] of [...["a8","b8","c8","d8","e8","f8","g8","h8","a7","d7"].map(q => [q, "black"]),
+                                ...["a1","b1","c1","d1","e1","f1","g1","h1","a2","d2"].map(q => [q, "white"])]) {
+    const el = page.locator(`.sq[data-square='${square}'] .piece`);
+    const png = PNG.sync.read(await el.screenshot());
+    let n = 0, dark = 0, light = 0;
+    for (let i = 0; i < png.data.length; i += 4) {
+      if (png.data[i + 3] < 200) continue;
+      const L = 0.2126 * png.data[i] + 0.7152 * png.data[i + 1] + 0.0722 * png.data[i + 2];
+      n++;
+      if (L < 60) dark++;
+      if (L > 210) light++;
+    }
+    const got = dark > light * 1.5 ? "black" : light > dark * 1.5 ? "white" : "ambiguous";
+    if (got !== want) {
+      fail(`pieces: ${square} should read ${want}, measured ${got} ` +
+           `(dark ${(dark / n * 100).toFixed(1)}%, light ${(light / n * 100).toFixed(1)}%)`);
+    }
+    advances.add(await el.evaluate((e) => {
+      const r = document.createRange(); r.selectNodeContents(e);
+      return +r.getBoundingClientRect().width.toFixed(1);
+    }));
+  }
+  // All six glyphs are 1em in the bundled font, so any spread means something
+  // fell back to a face that is not it.
+  if (advances.size !== 1) {
+    fail(`pieces: advance widths not uniform (${[...advances].join(", ")}) -- ` +
+         `a glyph is coming from a different font`);
+  }
+  console.log(`### pieces: 20 squares, ink-tested, advance ${[...advances].join("/")}px\n`);
   await page.close();
 }
 
