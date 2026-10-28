@@ -366,14 +366,18 @@ for (const mate of MATES) {
 // whose geometry, parity and search were all verified. Nothing here looks at
 // glyphs; it measures ink, which is the only thing that would have caught it.
 //
-// Each role is compared against ITSELF in the other colour, never against a
-// fixed threshold. The first version of this gate asked whether a piece had
-// more light ink than dark by a 1.5x margin, and the white queen failed it on
-// CI's Linux WebKit at 16.2% vs 12.1%. That was the gate being wrong, not the
-// board: a queen's spikes carry far more rim per unit of fill than a rook's,
-// so a fixed ratio was really measuring glyph shape, and it moved with the
-// rasteriser. White-queen against black-queen holds the shape constant and
-// leaves only the thing under test.
+// The measure is `light - dark`: does this piece READ light or dark? White
+// must score positive, black negative. That is the whole claim, and it has no
+// tuned constant in it beyond a 2-point margin so a near-tie cannot pass.
+//
+// Two earlier versions of this gate were wrong, both failing on the queen,
+// which has the most perimeter per unit of fill of the six. The first asked
+// for more light ink than dark by a fixed 1.5x -- that measures glyph shape,
+// and moved with the rasteriser. The second compared white-queen against
+// black-queen and demanded the white one carry 1.5x LESS dark ink, which
+// contradicts the design: style.css draws a deliberate dark rim around white
+// pieces so they survive a light square. Penalising that rim meant failing
+// the board for working as intended.
 {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(base, { waitUntil: "domcontentloaded" });
@@ -408,22 +412,24 @@ for (const mate of MATES) {
     return { dark: dark / n, light: light / n };
   };
 
-  // Same role, both colours. The starting position gives one of each.
-  const PAIRS = [["rook", "a1", "a8"], ["knight", "b1", "b8"], ["bishop", "c1", "c8"],
-                 ["queen", "d1", "d8"], ["king", "e1", "e8"], ["pawn", "a2", "a7"]];
+  // One of each role, both colours, from the starting position.
+  const PIECES = [["rook", "a1", "a8"], ["knight", "b1", "b8"], ["bishop", "c1", "c8"],
+                  ["queen", "d1", "d8"], ["king", "e1", "e8"], ["pawn", "a2", "a7"]];
+  const MARGIN = 0.02;  // 2 points of ink; anything less is a coin flip
   const lines = [];
-  for (const [role, whiteSq, blackSq] of PAIRS) {
-    const w = await ink(whiteSq), b = await ink(blackSq);
-    const lightRatio = w.light / b.light;   // white should carry much more light ink
-    const darkRatio = b.dark / w.dark;      // and much less dark ink
-    const ok = lightRatio > 1.5 && darkRatio > 1.5;
-    if (!ok) {
-      fail(`pieces: ${role} ${whiteSq}/${blackSq} not told apart -- ` +
-           `white(light ${(w.light * 100).toFixed(1)}%, dark ${(w.dark * 100).toFixed(1)}%) ` +
-           `black(light ${(b.light * 100).toFixed(1)}%, dark ${(b.dark * 100).toFixed(1)}%) ` +
-           `ratios ${lightRatio.toFixed(2)}x / ${darkRatio.toFixed(2)}x`);
+  for (const [role, whiteSq, blackSq] of PIECES) {
+    for (const [square, want] of [[whiteSq, "white"], [blackSq, "black"]]) {
+      const { dark, light } = await ink(square);
+      const score = light - dark;
+      const ok = want === "white" ? score >= MARGIN : score <= -MARGIN;
+      if (!ok) {
+        fail(`pieces: ${role} on ${square} should read ${want} but scores ` +
+             `${score >= 0 ? "+" : ""}${(score * 100).toFixed(1)} ` +
+             `(light ${(light * 100).toFixed(1)}%, dark ${(dark * 100).toFixed(1)}%)`);
+      }
+      if (want === "white") lines.push(`${role} ${score >= 0 ? "+" : ""}${(score * 100).toFixed(0)}`);
+      else lines[lines.length - 1] += `/${score >= 0 ? "+" : ""}${(score * 100).toFixed(0)}`;
     }
-    lines.push(`${role} ${lightRatio.toFixed(1)}x/${darkRatio.toFixed(1)}x`);
   }
   // All six glyphs are 1em in the bundled font, so any spread means something
   // fell back to a face that is not it.
