@@ -366,12 +366,14 @@ for (const mate of MATES) {
 // whose geometry, parity and search were all verified. Nothing here looks at
 // glyphs; it measures ink, which is the only thing that would have caught it.
 //
-// The margin matters as much as the sign. Before the piece font landed, the
-// queen passed in Chromium and came out AMBIGUOUS in WebKit (dark 22.0% vs
-// light 14.8%) -- its thin spikes let the rim shadow eat proportionally more
-// of the glyph than a rook's. A 1.5x ratio is the line; the queen is still
-// the narrowest pass, so if this gate ever fails it will likely fail there
-// first.
+// Each role is compared against ITSELF in the other colour, never against a
+// fixed threshold. The first version of this gate asked whether a piece had
+// more light ink than dark by a 1.5x margin, and the white queen failed it on
+// CI's Linux WebKit at 16.2% vs 12.1%. That was the gate being wrong, not the
+// board: a queen's spikes carry far more rim per unit of fill than a rook's,
+// so a fixed ratio was really measuring glyph shape, and it moved with the
+// rasteriser. White-queen against black-queen holds the shape constant and
+// leaves only the thing under test.
 {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto(base, { waitUntil: "domcontentloaded" });
@@ -386,8 +388,7 @@ for (const mate of MATES) {
   }
 
   const advances = new Set();
-  for (const [square, want] of [...["a8","b8","c8","d8","e8","f8","g8","h8","a7","d7"].map(q => [q, "black"]),
-                                ...["a1","b1","c1","d1","e1","f1","g1","h1","a2","d2"].map(q => [q, "white"])]) {
+  const ink = async (square) => {
     const el = page.locator(`.sq[data-square='${square}'] .piece`);
     const png = PNG.sync.read(await el.screenshot());
     let n = 0, dark = 0, light = 0;
@@ -398,15 +399,31 @@ for (const mate of MATES) {
       if (L < 60) dark++;
       if (L > 210) light++;
     }
-    const got = dark > light * 1.5 ? "black" : light > dark * 1.5 ? "white" : "ambiguous";
-    if (got !== want) {
-      fail(`pieces: ${square} should read ${want}, measured ${got} ` +
-           `(dark ${(dark / n * 100).toFixed(1)}%, light ${(light / n * 100).toFixed(1)}%)`);
-    }
     advances.add(await el.evaluate((e) => {
       const r = document.createRange(); r.selectNodeContents(e);
       return +r.getBoundingClientRect().width.toFixed(1);
     }));
+    // Square backgrounds are mid-tone (L~94 and L~170) and fall in neither
+    // bucket, so these are the glyph's own fill and rim.
+    return { dark: dark / n, light: light / n };
+  };
+
+  // Same role, both colours. The starting position gives one of each.
+  const PAIRS = [["rook", "a1", "a8"], ["knight", "b1", "b8"], ["bishop", "c1", "c8"],
+                 ["queen", "d1", "d8"], ["king", "e1", "e8"], ["pawn", "a2", "a7"]];
+  const lines = [];
+  for (const [role, whiteSq, blackSq] of PAIRS) {
+    const w = await ink(whiteSq), b = await ink(blackSq);
+    const lightRatio = w.light / b.light;   // white should carry much more light ink
+    const darkRatio = b.dark / w.dark;      // and much less dark ink
+    const ok = lightRatio > 1.5 && darkRatio > 1.5;
+    if (!ok) {
+      fail(`pieces: ${role} ${whiteSq}/${blackSq} not told apart -- ` +
+           `white(light ${(w.light * 100).toFixed(1)}%, dark ${(w.dark * 100).toFixed(1)}%) ` +
+           `black(light ${(b.light * 100).toFixed(1)}%, dark ${(b.dark * 100).toFixed(1)}%) ` +
+           `ratios ${lightRatio.toFixed(2)}x / ${darkRatio.toFixed(2)}x`);
+    }
+    lines.push(`${role} ${lightRatio.toFixed(1)}x/${darkRatio.toFixed(1)}x`);
   }
   // All six glyphs are 1em in the bundled font, so any spread means something
   // fell back to a face that is not it.
@@ -414,7 +431,7 @@ for (const mate of MATES) {
     fail(`pieces: advance widths not uniform (${[...advances].join(", ")}) -- ` +
          `a glyph is coming from a different font`);
   }
-  console.log(`### pieces: 20 squares, ink-tested, advance ${[...advances].join("/")}px\n`);
+  console.log(`### pieces: ${lines.join("  ")}  advance ${[...advances].join("/")}px\n`);
   await page.close();
 }
 
