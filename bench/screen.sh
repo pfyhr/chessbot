@@ -27,8 +27,9 @@
 #   bench/screen.sh runs/cap-big 385 runs/cap-small 574 25     # 25 Elo bar
 #
 set -u
-R=/Users/pontus/repos/chessbot
-FC=/Users/pontus/repos/fastchess/fastchess
+# The repo root, from where this script lives, so a clone anywhere works.
+R=$(cd "$(dirname "$0")/.." && pwd)
+FC=${FC:-$(dirname "$R")/fastchess/fastchess}
 # Concurrency = active searches, not engine processes: fastchess runs CONC games
 # at once and chess is turn-based, so while one engine thinks the other waits.
 # Every M2 match before 2026-10-19 used 4, chosen before that was understood.

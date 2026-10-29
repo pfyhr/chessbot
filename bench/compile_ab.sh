@@ -16,7 +16,8 @@
 # nothing. Alternating blocks keep thermal drift (a laptop warms over an hour)
 # symmetric between the arms instead of loading it onto whichever ran second.
 set -u
-R=/Users/pontus/repos/chessbot
+# The repo root, from where this script lives, so a clone anywhere works.
+R=$(cd "$(dirname "$0")/.." && pwd)
 OUT=$R/runs/compile-ab
 GENS=${GENS:-6}      # per block; the first is discarded as warm-up
 BLOCKS=${BLOCKS:-2}  # A-B pairs

@@ -4,7 +4,8 @@ Measures the real AlphaZero network (19 blocks x 256 filters, ~46M params) on
 this machine, rather than extrapolating from FLOP counts.
 """
 import time, torch, sys
-sys.path.insert(0, "/Users/pontus/repos/chessbot/python")
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "python"))
 from chessbot.net import Net
 
 dev = "mps" if torch.backends.mps.is_available() else "cpu"

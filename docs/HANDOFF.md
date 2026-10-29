@@ -60,13 +60,12 @@ an H100 and nothing on a GeForce card, and PyTorch enables it by itself).
 
 **Loose ends**
 
-* `/Users/pontus/repos/chessbot` is hardcoded in 13 files (`bench/*.sh`,
-  `config.json`) and in one old commit of `web/parity/reference.json`. **Closed
-  as won't-fix on 2026-10-29** — Pontus looked and did not care, and nothing is
-  secret in a home directory path. Do not re-raise it as a leak. The `R=` lines
-  are still a real portability bug the day these scripts run on a rented box;
-  fix them then, as `R=$(cd "$(dirname "$0")/.." && pwd)` the way `web/build.sh`
-  already does.
+* The home directory path is **out of the working tree** as of 2026-10-29: the
+  bench scripts derive `R` from their own location, `fastchess` is found beside
+  the repo, and the stray `config.json` (fastchess autosave, read by nothing) is
+  deleted and ignored. Keep it that way — no absolute paths in committed files.
+  Git history still contains the old ones; not rewritten, and the commit
+  metadata gives the same thing away regardless.
 * `?backend=webgpu` is untested surface: CI runners have no GPU.
 * Wanted, not needed: **our own piece glyphs**, six SVG paths instead of a
   subset of Noto Sans Symbols 2. Would drop the font licence from the deploy

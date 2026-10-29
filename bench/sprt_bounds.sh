@@ -15,8 +15,9 @@
 #   NULL    identical engines. The binding practical question is whether H0 is
 #           reachable at all in a tolerable number of games.
 set -u
-R=/Users/pontus/repos/chessbot
-FC=/Users/pontus/repos/fastchess/fastchess
+# The repo root, from where this script lives, so a clone anywhere works.
+R=$(cd "$(dirname "$0")/.." && pwd)
+FC=${FC:-$(dirname "$R")/fastchess/fastchess}
 OUT=$R/runs/sprt-bounds
 mkdir -p $OUT
 L=$OUT/report.log

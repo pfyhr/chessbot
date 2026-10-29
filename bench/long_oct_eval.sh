@@ -19,8 +19,9 @@
 #
 # SPRT IS DIRECTIONAL: engine A is the candidate. H1 = "A is better by >=50".
 set -u
-R=/Users/pontus/repos/chessbot
-FC=/Users/pontus/repos/fastchess/fastchess
+# The repo root, from where this script lives, so a clone anywhere works.
+R=$(cd "$(dirname "$0")/.." && pwd)
+FC=${FC:-$(dirname "$R")/fastchess/fastchess}
 OUT=$R/runs/long-oct-eval
 mkdir -p $OUT
 L=$OUT/report.log

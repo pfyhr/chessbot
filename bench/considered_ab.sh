@@ -20,7 +20,8 @@
 # have wedged this project before. Cost per generation is read per-arm from
 # history.json, so equal-wall-clock is reconstructed rather than staged.
 set -u
-R=/Users/pontus/repos/chessbot
+# The repo root, from where this script lives, so a clone anywhere works.
+R=$(cd "$(dirname "$0")/.." && pwd)
 OUT=$R/runs/considered-ab
 GENS=${GENS:-300}
 INIT=${INIT:-$R/runs/long-oct/gen2600.pt}

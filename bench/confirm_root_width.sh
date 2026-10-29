@@ -18,8 +18,9 @@
 # short-run training caveats apply. Fixed nodes, so a busy laptop cannot distort
 # it. Results append as they land.
 set -u
-R=/Users/pontus/repos/chessbot
-FC=/Users/pontus/repos/fastchess/fastchess
+# The repo root, from where this script lives, so a clone anywhere works.
+R=$(cd "$(dirname "$0")/.." && pwd)
+FC=${FC:-$(dirname "$R")/fastchess/fastchess}
 OUT=$R/runs/confirm-ra8
 mkdir -p $OUT
 L=$OUT/report.log

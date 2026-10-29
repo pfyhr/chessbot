@@ -22,7 +22,8 @@
 # under contention measures the contention. Jupiter's CPU is shared with
 # srm-studio-34; agree a window first.
 set -u
-R=/Users/pontus/repos/chessbot
+# The repo root, from where this script lives, so a clone anywhere works.
+R=$(cd "$(dirname "$0")/.." && pwd)
 OUT=$R/runs/driver-threads
 # Budget: phase 1 ~4 min, phase 2 ~5 min, phase 3 ~40 min. About 50 minutes in
 # all at these defaults. GENS=3 BLOCKS=1 cuts phase 3 to ten and still gives a

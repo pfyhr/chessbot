@@ -27,8 +27,9 @@
 # Head to head, not a proxy: this project has been wrong four times by trusting
 # material, loss curves and tactical suites over actual games.
 set -u
-R=/Users/pontus/repos/chessbot
-FC=${FC:-/Users/pontus/repos/fastchess/fastchess}
+# The repo root, from where this script lives, so a clone anywhere works.
+R=$(cd "$(dirname "$0")/.." && pwd)
+FC=${FC:-$(dirname "$R")/fastchess/fastchess}
 [ -x "$FC" ] || FC=$HOME/fastchess/fastchess
 A=$R/runs/ab-salvage/ab-sims32
 B=$R/runs/ab-salvage/ab-sims64

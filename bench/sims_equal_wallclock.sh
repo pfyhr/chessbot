@@ -17,8 +17,9 @@
 # -113 +/-30 Elo late and BEHIND by +101 +/-37 early. The question here is
 # whether the late advantage is big enough to pay for the generations it costs.
 set -u
-R=/Users/pontus/repos/chessbot
-FC=${FC:-/Users/pontus/repos/fastchess/fastchess}
+# The repo root, from where this script lives, so a clone anywhere works.
+R=$(cd "$(dirname "$0")/.." && pwd)
+FC=${FC:-$(dirname "$R")/fastchess/fastchess}
 [ -x "$FC" ] || FC=$HOME/fastchess/fastchess
 A=$R/runs/ab-salvage/ab-sims32
 B=$R/runs/ab-salvage/ab-sims64

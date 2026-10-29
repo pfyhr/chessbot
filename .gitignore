@@ -50,3 +50,9 @@ papers/*.pdf
 # to regenerate it with.
 web/node_modules/
 web/dist/
+
+# fastchess autosaves its state here when run from the repo root. It is not
+# our config -- nothing reads it -- and it carries absolute paths from
+# whichever machine ran last. The bench scripts run fastchess from a scratch
+# dir for this reason; this catches the times it gets run by hand.
+config.json

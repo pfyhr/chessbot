@@ -11,8 +11,9 @@
 # policy's own. If the probes are right about the policy, gen1371 should do
 # BETTER at 1 node than at 128 relative to gen2600.
 set -u
-R=/Users/pontus/repos/chessbot
-FC=/Users/pontus/repos/fastchess/fastchess
+# The repo root, from where this script lives, so a clone anywhere works.
+R=$(cd "$(dirname "$0")/.." && pwd)
+FC=${FC:-$(dirname "$R")/fastchess/fastchess}
 OUT=$R/runs/long-oct-fixed
 mkdir -p $OUT
 L=$OUT/report.log
