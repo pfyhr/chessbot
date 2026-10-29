@@ -60,9 +60,6 @@ an H100 and nothing on a GeForce card, and PyTorch enables it by itself).
 
 **Loose ends**
 
-* Two of my processes are still running and my permission check refused to kill
-  them: `serve_dist.py` on `*:8099` (serving `web/dist` to the LAN) and an old
-  `thruput.py`. `kill 44501 89824`.
 * `web/parity/reference.json` used to carry an absolute build path. The live
   site, the release asset and future CI are clean; **old commits and old CI
   logs still contain it**. Scrubbing published history on a public repo is
