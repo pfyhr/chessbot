@@ -1,8 +1,31 @@
 # Status
 
-_Last updated 2026-10-26. **Nothing is running locally — Jupiter is free for
-other work.** Next step is `docs/root-width-plan.md`, steps 1 and 2, which are
-free and take about an hour._
+_Last updated 2026-11-12. **Running:** the drained-vs-stream A/B on aida
+overnight (GPU 0 and 1, 22:50-06:50), and a 20 GB Lc0 test80 download on
+Jupiter into `runs/lc0-data/test80/`. Next: games-plus-moves storage, then the
+supervised warm-start arm on Jupiter._
+
+## 2026-11-12 — 765 to 201k self-play evals/s on a 3090, and Lc0's data
+
+**CUDA throughput** on aida (borrowed 3x RTX 3090, branch `cuda-throughput`):
+pools on threads, a packed bridge (bitboards up, legal logits down), packed
+planes encoded straight from bitboards, streaming self-play that never
+drains, CUDA graphs, and compile inside the graphs took self-play from 765
+positions/s to **201k evals/s** -- `bench/results/2026-11-12-cuda-pools-and-the-transfer-wall.md`.
+A native Metal (MPSGraph) prototype runs the net ~1.3x faster than compiled
+PyTorch MPS on an M1 Pro -- `2026-11-12-mps-bridge-and-native-metal.md`.
+
+`--stream` changes training semantics (games straddle weight updates), so an
+overnight A/B against the drained loop, one arm per GPU, decides whether it
+is safe to use.
+
+**Lc0's public training data decodes cleanly into our engine**: zero mismatches
+on 31,340 positions, ~28 TB available, ~200 B/position compressed. Our own
+replay buffer costs ~29 KB/position, against ~150 B for games-plus-moves.
+At 201k evals/s AlphaZero's game count is ~2 weeks of one card, but a 6x96
+net cannot reach AlphaZero strength and a 20x256 one costs ~24x per eval, so a
+warm start from Lc0 data is the cheap path --
+`bench/results/2026-11-12-lc0-data-as-a-warm-start.md`.
 
 ## 2026-10-26 — long-oct finished, and the probes were wrong about it
 
