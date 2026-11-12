@@ -55,6 +55,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<chess::PyChessSearch>()?;
     m.add_function(wrap_pyfunction!(chess::encode_batch, m)?)?;
     m.add_function(wrap_pyfunction!(chess::legal_mask_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(chess::relative_move_index, m)?)?;
+    m.add_function(wrap_pyfunction!(chess::replay_packed, m)?)?;
     m.add_function(wrap_pyfunction!(hot_profile, m)?)?;
     m.add_function(wrap_pyfunction!(hot_profile_clear, m)?)?;
     m.add_function(wrap_pyfunction!(hot_sentinel, m)?)?;

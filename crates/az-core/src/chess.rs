@@ -230,6 +230,26 @@ impl Default for ChessPos {
 }
 
 /// Plane index for a queen-style move, or `None` if it is not a straight line.
+/// Policy index of a move from its geometry alone, in the mover's frame
+/// (ranks already flipped for Black). Castling is the king's two-square move
+/// and a queen promotion is the plain pawn move, exactly as
+/// [`ChessPos::policy_index`] encodes them. `None` for a move no piece makes.
+///
+/// No position is needed, which is what lets another engine's move table be
+/// translated into ours once, up front.
+pub fn relative_move_index(from: Square, to: Square, promotion: Option<Role>) -> Option<usize> {
+    let df = i32::from(to.file()) - i32::from(from.file());
+    let dr = i32::from(to.rank()) - i32::from(from.rank());
+    let plane = match promotion {
+        // Queen promotions ride on the pawn move's own plane; only the
+        // lesser pieces get dedicated planes.
+        Some(Role::Queen) => queen_plane(df, dr)?,
+        Some(role) => underpromo_plane(role, df)?,
+        None => knight_plane(df, dr).or_else(|| queen_plane(df, dr))?,
+    };
+    Some(plane * 64 + usize::from(from))
+}
+
 fn queen_plane(df: i32, dr: i32) -> Option<usize> {
     if df != 0 && dr != 0 && df.abs() != dr.abs() {
         return None;
@@ -322,31 +342,12 @@ impl Game for ChessPos {
     fn policy_index(&self, mv: Self::Move) -> usize {
         let flip = self.pos.turn() == Color::Black;
         let (raw_from, raw_to) = Self::from_to(mv);
-        let from = Self::rel(raw_from, flip);
-        let to = Self::rel(raw_to, flip);
-
-        let df = i32::from(to.file()) - i32::from(from.file());
-        let dr = i32::from(to.rank()) - i32::from(from.rank());
-
-        let plane = if let Move::Normal {
-            promotion: Some(role),
-            ..
-        } = mv
-        {
-            // Queen promotions ride on the pawn move's own plane; only the
-            // lesser pieces get dedicated planes.
-            if role == Role::Queen {
-                queen_plane(df, dr).expect("queen promotion is a one-square pawn move")
-            } else {
-                underpromo_plane(role, df).expect("underpromotion must be knight, bishop or rook")
-            }
-        } else if let Some(p) = knight_plane(df, dr) {
-            p
-        } else {
-            queen_plane(df, dr).expect("move is neither a knight hop nor a straight line")
+        let promotion = match mv {
+            Move::Normal { promotion, .. } => promotion,
+            _ => None,
         };
-
-        plane * 64 + usize::from(from)
+        relative_move_index(Self::rel(raw_from, flip), Self::rel(raw_to, flip), promotion)
+            .expect("every legal move is a queen line, a knight hop or a promotion")
     }
 
     fn move_from_policy_index(&self, index: usize) -> Option<Self::Move> {

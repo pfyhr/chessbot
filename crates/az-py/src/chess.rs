@@ -13,7 +13,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use shakmaty::uci::UciMove;
-use shakmaty::Move;
+use shakmaty::{Move, Role, Square};
 
 /// A chess position, with the history needed for repetition detection.
 // `from_py_object` so batch calls can take `Vec<PyPosition>` directly; PyO3 0.29
@@ -187,6 +187,70 @@ pub(crate) fn encode_batch<'py>(
     Array4::from_shape_vec((n, c, h, w), buf)
         .map(|a| a.into_pyarray(py))
         .map_err(|e| PyValueError::new_err(e.to_string()))
+}
+
+/// Policy index of a UCI move from its geometry alone, read in the mover's
+/// frame (Black's moves already rank-flipped). `None` if no piece moves so.
+///
+/// Castling must be given as the king's two-square move (`e1g1`), and a
+/// queen promotion may carry its `q` or not -- both are the plain pawn move.
+#[pyfunction]
+pub(crate) fn relative_move_index(uci: &str) -> PyResult<Option<usize>> {
+    let bad = || PyValueError::new_err(format!("not a UCI move: {uci:?}"));
+    if !(4..=5).contains(&uci.len()) || !uci.is_ascii() {
+        return Err(bad());
+    }
+    let from = Square::from_ascii(&uci.as_bytes()[0..2]).map_err(|_| bad())?;
+    let to = Square::from_ascii(&uci.as_bytes()[2..4]).map_err(|_| bad())?;
+    let promotion = match uci.as_bytes().get(4) {
+        None => None,
+        Some(&c) => Some(Role::from_char(c as char).ok_or_else(bad)?),
+    };
+    Ok(az_core::chess::relative_move_index(from, to, promotion))
+}
+
+/// `(bits, scale)` rows of packed observations.
+type PackedRows<'py> = (Bound<'py, PyArray2<u64>>, Bound<'py, PyArray2<f32>>);
+
+/// Replay a game and return every position's packed observation.
+///
+/// `moves[i]` is the policy index of the move played from position `i`, so
+/// the result has `len(moves) + 1` rows: `(bits u64 (P, C), scale f32 (P, C))`,
+/// the same layout `SelfPlay::next_batch_packed` sends to the device. History
+/// and repetition planes come out right because the game is really played.
+///
+/// This is what lets a stored game cost ~150 bytes a position instead of the
+/// ~29 KB of float planes: positions are rebuilt on demand, in microseconds.
+#[pyfunction]
+pub(crate) fn replay_packed<'py>(
+    py: Python<'py>,
+    fen: &str,
+    moves: PyReadonlyArray1<'py, u16>,
+) -> PyResult<PackedRows<'py>> {
+    let mut pos = ChessPos::from_fen(fen).map_err(PyValueError::new_err)?;
+    let moves = moves.as_slice()?.to_vec();
+    let c = ChessPos::OBS_SHAPE.0;
+    let rows = moves.len() + 1;
+    let (bits, scale) = py.detach(|| -> Result<_, String> {
+        let mut bits = vec![0u64; rows * c];
+        let mut scale = vec![0f32; rows * c];
+        for (i, &idx) in moves.iter().enumerate() {
+            pos.encode_packed(&mut bits[i * c..(i + 1) * c], &mut scale[i * c..(i + 1) * c]);
+            let mv = pos.move_from_policy_index(usize::from(idx)).ok_or_else(|| {
+                format!("ply {i}: no legal move has index {idx} in {}", pos.fen())
+            })?;
+            pos.play(mv);
+        }
+        let last = moves.len();
+        pos.encode_packed(&mut bits[last * c..], &mut scale[last * c..]);
+        Ok((bits, scale))
+    })
+    .map_err(PyValueError::new_err)?;
+    let to_err = |e: ndarray::ShapeError| PyValueError::new_err(e.to_string());
+    Ok((
+        Array2::from_shape_vec((rows, c), bits).map_err(to_err)?.into_pyarray(py),
+        Array2::from_shape_vec((rows, c), scale).map_err(to_err)?.into_pyarray(py),
+    ))
 }
 
 /// Legal-move masks for many positions, shaped `(N, POLICY_LEN)`.
