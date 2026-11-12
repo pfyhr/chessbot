@@ -50,6 +50,11 @@ def pick_device(requested: str) -> str:
     return "cpu"
 
 
+def selfplay_amp(args):
+    """Autocast dtype for self-play forwards. Training is unaffected."""
+    return torch.bfloat16 if args.selfplay_bf16 else None
+
+
 def selfplay_generation(net, device: str, args, seed: int, infer=None, stream=None,
                         graph_forward=None):
     """`infer` is the handle used for forward passes -- a compiled wrapper when
@@ -62,7 +67,7 @@ def selfplay_generation(net, device: str, args, seed: int, infer=None, stream=No
     infer = infer if infer is not None else net
     if stream is not None:
         forward = graph_forward or pipeline.make_forward(
-            infer, device, bucket=args.batch_bucket,
+            infer, device, bucket=args.batch_bucket, amp=selfplay_amp(args),
             cap=-(-args.concurrency // args.pools), packed=args.bridge == "packed")
         (obs, policy, z, mask, pmask), stats, _ = stream.generation(args.games, forward)
         return (obs.astype(np.float16), policy.astype(np.float16), z, mask, pmask), stats
@@ -82,6 +87,7 @@ def selfplay_generation(net, device: str, args, seed: int, infer=None, stream=No
     # The cap is per pool: a pool never has more live games than its slots.
     forward = pipeline.make_forward(infer, device, bucket=args.batch_bucket,
                                     cap=-(-args.concurrency // args.pools),
+                                    amp=selfplay_amp(args),
                                     packed=args.bridge == "packed")
     (obs, policy, z, mask, pmask), stats = pipeline.merge(
         pipeline.run(pools, forward))
@@ -147,6 +153,8 @@ def main() -> None:
     ap.add_argument("--concurrency", type=int, default=256)
     ap.add_argument("--graphs", action="store_true",
                     help="self-play forward as CUDA graphs (needs --stream, --bridge packed)")
+    ap.add_argument("--selfplay-bf16", action="store_true",
+                    help="bf16 autocast for self-play forwards only (training stays fp32)")
     ap.add_argument("--stream", action="store_true",
                     help="never drain self-play between generations: unfinished "
                          "games carry over (keeps batches full; see pipeline.Stream)")
@@ -242,7 +250,13 @@ def main() -> None:
     infer = net
     if args.compile:
         try:
-            infer = torch.compile(net)
+            if args.graphs:
+                # Every bucket shape is compiled once, then captured. Without the
+                # raised limit dynamo falls back to eager past 8 shapes, silently.
+                torch._dynamo.config.cache_size_limit = 64
+                infer = torch.compile(net, dynamic=False)
+            else:
+                infer = torch.compile(net)
         except Exception as e:  # a backend that cannot compile is not fatal
             print(f"torch.compile unavailable ({type(e).__name__}), running eager")
             infer = net
@@ -257,6 +271,9 @@ def main() -> None:
     # so no finished run records which value produced it. Log it.
     print(f"sims={args.sims}  considered={args.considered}  "
           f"games/gen={args.games}  max_plies={args.max_plies}")
+    print(f"pools={args.pools}  bridge={args.bridge}  stream={args.stream}  "
+          f"graphs={args.graphs}  selfplay_bf16={args.selfplay_bf16}  "
+          f"concurrency={args.concurrency}")
     print(f"window={args.window}  lr={args.lr}  "
           f"value_mask={'off' if args.no_value_mask else 'on'}"
           + (f"  budget={args.max_hours}h" if args.max_hours else "") + "\n")
@@ -294,7 +311,7 @@ def main() -> None:
         net.eval()
         graph_forward = pipeline.GraphForward(
             infer, device, bucket=args.batch_bucket,
-            cap=-(-args.concurrency // args.pools), amp=None, pools=args.pools)
+            cap=-(-args.concurrency // args.pools), amp=selfplay_amp(args), pools=args.pools)
     stream = None
     if args.stream:
         stream = pipeline.Stream(
