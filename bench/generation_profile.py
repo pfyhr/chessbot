@@ -270,11 +270,17 @@ def main() -> None:
                 for _ in range(5):
                     net(x)
                 sync(device)
+                # Synchronise every few calls. MPS has no back-pressure: an
+                # unsynchronised 5 s loop queued thousands of calls and then
+                # spent many minutes draining them (CUDA blocks at ~1k queued
+                # launches, so it never showed). Four in flight keeps the
+                # pipeline full and the drain short.
                 t0, n = time.perf_counter(), 0
                 while time.perf_counter() - t0 < 5.0:
-                    net(x)
-                    n += b
-                sync(device)
+                    for _ in range(4):
+                        net(x)
+                        n += b
+                    sync(device)
                 r = n / (time.perf_counter() - t0)
             base = base or r
             print(f"{b:>7d} {r:>11,.0f}  {r / base:>5.2f}x")
