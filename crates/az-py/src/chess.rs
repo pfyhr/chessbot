@@ -4,7 +4,7 @@ use az_core::chess::ChessPos;
 use az_core::game::obs_len;
 use az_core::game::{Game, Outcome};
 use az_core::mcts::{Config, Rng, Search, Status};
-use az_core::selfplay::{Pcr, SelfPlay};
+use az_core::selfplay::{PackedBatch, Pcr, SelfPlay};
 use ndarray::{Array1, Array2, Array3, Array4};
 use numpy::{
     IntoPyArray, PyArray1, PyArray2, PyArray3, PyArray4, PyReadonlyArray1, PyReadonlyArray2,
@@ -256,6 +256,7 @@ pub struct PyChessSelfPlay {
     inner: SelfPlay<ChessPos>,
     obs: Vec<f32>,
     batch: usize,
+    packed: PackedBatch,
 }
 
 #[pymethods]
@@ -305,6 +306,7 @@ impl PyChessSelfPlay {
             inner,
             obs: Vec::new(),
             batch: 0,
+            packed: PackedBatch::default(),
         }
     }
 
@@ -349,6 +351,64 @@ impl PyChessSelfPlay {
         }
         let inner = &mut self.inner;
         py.detach(|| inner.submit(logits, values));
+        Ok(())
+    }
+
+    /// `next_batch` in compact form: `(bits, scale, legal)` or `None` when done.
+    ///
+    /// `bits` is `(N, 119)` uint64 and `scale` `(N, 119)` float32: plane p of
+    /// row r is bit i of `bits[r, p]` times `scale[r, p]` at square i, exactly
+    /// the planes `next_batch` would have returned. `legal` is `(N, W)` int32,
+    /// the legal policy indices of each row padded with 0; send back the logits
+    /// gathered at those indices with `submit_packed`.
+    #[allow(clippy::type_complexity)]
+    fn next_batch_packed<'py>(
+        &mut self,
+        py: Python<'py>,
+    ) -> PyResult<
+        Option<(
+            Bound<'py, PyArray2<u64>>,
+            Bound<'py, PyArray2<f32>>,
+            Bound<'py, PyArray2<i32>>,
+        )>,
+    > {
+        let (inner, b) = (&mut self.inner, &mut self.packed);
+        let n = py.detach(|| inner.next_batch_packed(b));
+        self.batch = n;
+        if n == 0 {
+            return Ok(None);
+        }
+        let planes = ChessPos::OBS_SHAPE.0;
+        let err = |e: ndarray::ShapeError| PyValueError::new_err(e.to_string());
+        let b = &self.packed;
+        Ok(Some((
+            Array2::from_shape_vec((n, planes), b.bits.clone()).map_err(err)?.into_pyarray(py),
+            Array2::from_shape_vec((n, planes), b.scale.clone()).map_err(err)?.into_pyarray(py),
+            Array2::from_shape_vec((n, b.width), b.legal.clone()).map_err(err)?.into_pyarray(py),
+        )))
+    }
+
+    /// Feed back a forward for a `next_batch_packed` batch: `compact` is
+    /// `(N, W)`, the logits gathered at that batch's `legal`; `values` is `(N,)`.
+    fn submit_packed(
+        &mut self,
+        py: Python<'_>,
+        compact: PyReadonlyArray2<f32>,
+        values: PyReadonlyArray1<f32>,
+    ) -> PyResult<()> {
+        let compact = compact.as_slice()?;
+        let values = values.as_slice()?;
+        if values.len() != self.batch || compact.len() != self.batch * self.packed.width {
+            return Err(PyValueError::new_err(format!(
+                "expected {} rows of width {}, got {} values and {} logits",
+                self.batch,
+                self.packed.width,
+                values.len(),
+                compact.len()
+            )));
+        }
+        let (inner, b) = (&mut self.inner, &mut self.packed);
+        py.detach(|| inner.submit_packed(b, compact, values));
         Ok(())
     }
 

@@ -88,46 +88,84 @@ def make_pools(*, pools: int, concurrency: int, games: int, seed: int, **kw) -> 
 
 
 def _drive(sp, forward, timing: PoolTiming) -> None:
+    packed = getattr(forward, "packed", False)
+    next_batch = sp.next_batch_packed if packed else sp.next_batch
+    submit = sp.submit_packed if packed else sp.submit
     while True:
         a = time.perf_counter()
-        obs = sp.next_batch()
+        batch = next_batch()
         timing.driver += time.perf_counter() - a
-        if obs is None:
+        if batch is None:
             return
         # `forward` ends in a device-to-host copy, so this is real GPU time.
         a = time.perf_counter()
-        logits, values = forward(obs)
+        logits, values = forward(batch)
         timing.gpu += time.perf_counter() - a
-        timing.evals += len(obs)
+        timing.evals += len(values)
         timing.batches += 1
         a = time.perf_counter()
-        sp.submit(logits, values)
+        submit(logits, values)
         timing.driver += time.perf_counter() - a
 
 
-def make_forward(infer, device: str, bucket: int = 1, cap: int | None = None, amp=None):
-    """A forward that takes the driver's numpy batch and returns what `submit` wants.
+def unpack_obs(bits: torch.Tensor, scale: torch.Tensor, shape) -> torch.Tensor:
+    """`(N, C)` int64 masks and `(N, C)` scales -> `(N, C, H, W)` float planes.
+
+    Bit i of a mask is square i of its plane, as `SelfPlay::next_batch_packed`
+    writes it. An arithmetic right shift is fine for bit 63: `& 1` keeps only
+    the bit asked for.
+    """
+    c, h, w = shape
+    shifts = torch.arange(h * w, device=bits.device, dtype=torch.int64)
+    planes = ((bits.unsqueeze(-1) >> shifts) & 1).to(scale.dtype) * scale.unsqueeze(-1)
+    return planes.view(len(bits), c, h, w)
+
+
+def make_forward(infer, device: str, bucket: int = 1, cap: int | None = None, amp=None,
+                 packed: bool = False):
+    """A forward that takes the driver's batch and returns what its submit wants.
 
     `bucket` pads the batch up to a multiple of itself (capped at `cap`) so a
     compiled network sees a handful of shapes instead of one per batch size.
     `amp` is a dtype for autocast, or None.
+
+    `packed` selects the compact bridge (`next_batch_packed`/`submit_packed`):
+    bit-packed planes go up, and only the legal moves' logits come back --
+    about 1.4 KB up and 0.15 KB down per position instead of 30 KB and 19 KB.
     """
-    def forward(obs: np.ndarray):
-        n = len(obs)
-        x = torch.from_numpy(obs).to(device)
+    ac_type = device.split(":")[0]
+
+    def run_net(x: torch.Tensor, n: int):
         if bucket > 1:
             b = bucket_size(n, bucket, cap or n)
             if b > n:
                 x = torch.cat([x, x.new_zeros(b - n, *x.shape[1:])], 0)
-        ac = (torch.autocast(device_type=device.split(":")[0], dtype=amp)
+        ac = (torch.autocast(device_type=ac_type, dtype=amp)
               if amp is not None else contextlib.nullcontext())
         with torch.no_grad(), ac:
             logits, wdl = infer(x)
-        logits, wdl = logits[:n], wdl[:n]
-        values = wdl_to_scalar(wdl.float())
+        return logits[:n], wdl_to_scalar(wdl[:n].float())
+
+    def forward_dense(obs: np.ndarray):
+        logits, values = run_net(torch.from_numpy(obs).to(device), len(obs))
         return (np.ascontiguousarray(logits.float().cpu().numpy()),
                 np.ascontiguousarray(values.cpu().numpy().astype(np.float32)))
-    return forward
+
+    def forward_packed(batch):
+        bits, scale, legal = batch
+        n = len(bits)
+        x = unpack_obs(torch.from_numpy(bits.view(np.int64)).to(device),
+                       torch.from_numpy(scale).to(device), cc.OBS_SHAPE)
+        logits, values = run_net(x, n)
+        idx = torch.from_numpy(legal).to(device).long()
+        compact = logits.gather(1, idx).float()
+        return (np.ascontiguousarray(compact.cpu().numpy()),
+                np.ascontiguousarray(values.cpu().numpy().astype(np.float32)))
+
+    if packed:
+        forward_packed.packed = True
+        return forward_packed
+    return forward_dense
 
 
 def run(pools: list, forward) -> list[PoolResult]:

@@ -108,7 +108,7 @@ def profile_selfplay(net, device: str, args) -> dict:
         max_plies=args.max_plies,
         threads=args.driver_threads,
     )
-    forward = pipeline.make_forward(net, device, amp=args.amp)
+    forward = pipeline.make_forward(net, device, amp=args.amp, packed=args.bridge == "packed")
     t0 = time.perf_counter()
     results = pipeline.run(pools, forward)
     total = time.perf_counter() - t0
@@ -178,7 +178,7 @@ def report(sp: dict, train_s: float, args, device: str) -> None:
     print(f"\n{'=' * 62}")
     print(f"generation profile  device={device}  concurrency={args.concurrency}  "
           f"games={args.games}  sims={args.sims}  driver-threads={args.driver_threads}  "
-          f"pools={args.pools}")
+          f"pools={args.pools}  bridge={args.bridge}")
     print("=" * 62)
     print(f"{'self-play, network forward':34s} {sp['gpu']:7.1f}s")
     print(f"{'self-play, Rust driver + bridge':34s} {sp['driver']:7.1f}s")
@@ -216,6 +216,8 @@ def main() -> None:
     ap.add_argument("--games", type=int, default=64,
                     help="fewer than a real generation; the split is what matters")
     ap.add_argument("--concurrency", type=int, default=256)
+    ap.add_argument("--bridge", choices=["dense", "packed"], default="dense",
+                    help="packed: bit-packed planes up, legal-move logits down")
     ap.add_argument("--pools", type=int, default=1,
                     help="independent game pools on separate threads (double buffering)")
     ap.add_argument("--driver-threads", type=int, default=1,

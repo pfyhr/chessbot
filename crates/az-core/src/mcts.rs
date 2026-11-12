@@ -230,6 +230,27 @@ impl<G: Game> Search<G> {
         &self.nodes[self.pending as usize].pos
     }
 
+    /// Policy indices [`Search::apply`] will read for the pending position:
+    /// its legal moves, or nothing for a terminal one. Appended to `out`.
+    ///
+    /// This is what lets a caller ship only these logits back from the
+    /// network instead of all `POLICY_LEN` of them.
+    pub fn pending_policy_indices(&self, out: &mut Vec<i32>) {
+        let node = &self.nodes[self.pending as usize];
+        if node.terminal.is_some() {
+            return;
+        }
+        let push = |out: &mut Vec<i32>, mv: &G::Move| out.push(node.pos.policy_index(*mv) as i32);
+        if node.moves.is_empty() {
+            // Mirrors `expand_node`, which regenerates a missing list.
+            let mut moves = Vec::new();
+            node.pos.expand(&mut moves);
+            moves.iter().for_each(|mv| push(out, mv));
+        } else {
+            node.moves.iter().for_each(|mv| push(out, mv));
+        }
+    }
+
     pub fn is_complete(&self) -> bool {
         self.finished
     }

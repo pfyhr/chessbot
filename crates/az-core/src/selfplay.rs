@@ -163,6 +163,44 @@ pub struct SelfPlay<G: Game> {
     pool: Option<rayon::ThreadPool>,
 }
 
+/// Buffers for [`SelfPlay::next_batch_packed`], reused across batches.
+///
+/// After a call with result `n`: `bits` and `scale` are `n * planes`, and
+/// plane p of row r is `bit i of bits[r*planes+p]` times `scale[r*planes+p]`
+/// at square i. `legal` is `n * width`, the first `lens[r]` entries of row r
+/// being its legal policy indices and the rest padding.
+#[derive(Default)]
+pub struct PackedBatch {
+    pub bits: Vec<u64>,
+    pub scale: Vec<f32>,
+    pub legal: Vec<i32>,
+    pub lens: Vec<u16>,
+    pub width: usize,
+    dense: Vec<f32>,
+    flat: Vec<i32>,
+    row: Vec<f32>,
+}
+
+/// One observation plane as `(mask, scale)`: bit i set where the plane is
+/// nonzero, and the single value every nonzero square holds.
+///
+/// Panics if a plane holds two different nonzero values, which would make the
+/// packing lossy. Every plane the encoders write today is a 0/1 mask or a
+/// uniform fill; a future encoder that breaks that must fail here, loudly,
+/// rather than train on a silently different input.
+pub fn pack_plane(plane: &[f32]) -> (u64, f32) {
+    let mut mask = 0u64;
+    let mut scale = 0.0f32;
+    for (i, &v) in plane.iter().enumerate() {
+        if v != 0.0 {
+            assert!(mask == 0 || v == scale, "plane is not mask x scale: {v} vs {scale}");
+            mask |= 1 << i;
+            scale = v;
+        }
+    }
+    (mask, scale)
+}
+
 /// Does this move get the full budget? A fresh draw per move.
 fn roll(rng: &mut Rng, pcr: Option<Pcr>) -> bool {
     match pcr {
@@ -541,6 +579,78 @@ impl<G: Game> SelfPlay<G> {
         self.slots.iter().map(|s| s.truncated).sum()
     }
 
+    /// [`SelfPlay::next_batch`] in the compact form that crosses to the GPU.
+    ///
+    /// The dense batch is ~30 KB of f32 per position, almost all of it 0.0 and
+    /// 1.0, and the network's answer is `POLICY_LEN` logits of which ~35 are
+    /// read. On a 3090 at batch 1024 moving those two arrays cost about three
+    /// times the forward pass itself. Here every plane becomes one bit mask and
+    /// one scale (exact: each plane is a mask times a single value, which
+    /// [`pack_plane`] asserts), and the legal policy indices travel along so the
+    /// device can gather just those logits for [`SelfPlay::submit_packed`].
+    pub fn next_batch_packed(&mut self, b: &mut PackedBatch) -> usize {
+        let n = self.next_batch(&mut b.dense);
+        let (planes, h, w) = G::OBS_SHAPE;
+        let hw = h * w;
+        assert!(hw <= 64, "a plane must fit one u64 mask");
+        let obs = obs_len::<G>();
+
+        b.bits.clear();
+        b.scale.clear();
+        b.bits.resize(n * planes, 0);
+        b.scale.resize(n * planes, 0.0);
+        for r in 0..n {
+            let row = &b.dense[r * obs..(r + 1) * obs];
+            for p in 0..planes {
+                let (m, s) = pack_plane(&row[p * hw..(p + 1) * hw]);
+                b.bits[r * planes + p] = m;
+                b.scale[r * planes + p] = s;
+            }
+        }
+
+        // Legal indices, padded to the batch's widest row. Padding repeats
+        // index 0, which the device gathers harmlessly and the scatter ignores.
+        b.lens.clear();
+        let mut flat = std::mem::take(&mut b.legal);
+        flat.clear();
+        for &slot in &self.batch_slots {
+            let before = flat.len();
+            self.slots[slot].search.pending_policy_indices(&mut flat);
+            b.lens.push((flat.len() - before) as u16);
+        }
+        b.width = b.lens.iter().copied().max().unwrap_or(0).max(1) as usize;
+        b.legal.clear();
+        b.legal.resize(n * b.width, 0);
+        let mut src = 0;
+        for (r, &len) in b.lens.iter().enumerate() {
+            let len = len as usize;
+            b.legal[r * b.width..r * b.width + len].copy_from_slice(&flat[src..src + len]);
+            src += len;
+        }
+        b.flat = flat;
+        n
+    }
+
+    /// [`SelfPlay::submit`] for a batch from [`SelfPlay::next_batch_packed`].
+    ///
+    /// `compact` is `n * b.width`: row k holds the logits at `b.legal[k]`, in
+    /// that order. They are scattered into a full policy row before `apply`,
+    /// which reads only the legal entries, so the rest of the row is never
+    /// looked at and is not cleared between rows.
+    pub fn submit_packed(&mut self, b: &mut PackedBatch, compact: &[f32], values: &[f32]) {
+        let n = self.batch_slots.len();
+        assert_eq!(values.len(), n, "expected {n} values");
+        assert_eq!(compact.len(), n * b.width, "expected {n} rows of {}", b.width);
+        b.row.resize(G::POLICY_LEN, 0.0);
+        for (k, &slot) in self.batch_slots.iter().enumerate() {
+            let len = b.lens[k] as usize;
+            for j in 0..len {
+                b.row[b.legal[k * b.width + j] as usize] = compact[k * b.width + j];
+            }
+            prof_time!("ns_apply", self.slots[slot].search.apply(&b.row, values[k]));
+        }
+    }
+
     /// Drain the finished games.
     ///
     /// Grouped by slot rather than interleaved in completion order, because the
@@ -559,6 +669,25 @@ impl<G: Game> SelfPlay<G> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pack_plane_is_exact_for_masks_and_fills() {
+        let mut p = [0.0f32; 64];
+        p[0] = 1.0;
+        p[63] = 1.0;
+        assert_eq!(super::pack_plane(&p), ((1u64 << 63) | 1, 1.0));
+        assert_eq!(super::pack_plane(&[0.37f32; 64]), (u64::MAX, 0.37));
+        assert_eq!(super::pack_plane(&[0.0f32; 42]), (0, 0.0));
+    }
+
+    #[test]
+    #[should_panic(expected = "not mask x scale")]
+    fn pack_plane_refuses_a_lossy_plane() {
+        let mut p = [0.0f32; 64];
+        p[1] = 1.0;
+        p[2] = 0.5;
+        super::pack_plane(&p);
+    }
     use crate::connect4::Connect4;
 
     /// As `run_flat`, with playout cap randomization.

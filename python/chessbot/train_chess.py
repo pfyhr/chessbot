@@ -71,7 +71,8 @@ def selfplay_generation(net, device: str, args, seed: int, infer=None):
     )
     # The cap is per pool: a pool never has more live games than its slots.
     forward = pipeline.make_forward(infer, device, bucket=args.batch_bucket,
-                                    cap=-(-args.concurrency // args.pools))
+                                    cap=-(-args.concurrency // args.pools),
+                                    packed=args.bridge == "packed")
     (obs, policy, z, mask, pmask), stats = pipeline.merge(
         pipeline.run(pools, forward))
     # float16 in the buffer: full precision here would be ~4 GB per generation.
@@ -134,6 +135,8 @@ def main() -> None:
                          "measured against rather than assumed worse")
     ap.add_argument("--games", type=int, default=256)
     ap.add_argument("--concurrency", type=int, default=256)
+    ap.add_argument("--bridge", choices=["dense", "packed"], default="dense",
+                    help="packed: bit-packed planes up, legal-move logits down")
     ap.add_argument("--pools", type=int, default=1,
                     help="independent game pools on separate threads, so one pool's "
                          "tree work overlaps another's forward pass")
