@@ -41,6 +41,7 @@
 //! merely equivalent.
 
 use crate::game::{obs_len, Game, Outcome, Player};
+pub use crate::game::pack_plane;
 use crate::mcts::{Config, Rng, Search, Status};
 use crate::{prof_count, prof_time};
 
@@ -165,40 +166,23 @@ pub struct SelfPlay<G: Game> {
 
 /// Buffers for [`SelfPlay::next_batch_packed`], reused across batches.
 ///
-/// After a call with result `n`: `bits` and `scale` are `n * planes`, and
-/// plane p of row r is `bit i of bits[r*planes+p]` times `scale[r*planes+p]`
-/// at square i. `legal` is `n * width`, the first `lens[r]` entries of row r
-/// being its legal policy indices and the rest padding.
+/// After a call returning `n` (also stored in `rows`): the first
+/// `n * planes` entries of `bits` and `scale` are the batch -- plane p of row
+/// r is bit i of `bits[r*planes+p]` times `scale[r*planes+p]` at square i --
+/// and anything after them is stale. `legal` is exactly `n * width`, the
+/// first `lens[r]` entries of row r being its legal policy indices and the
+/// rest padding.
 #[derive(Default)]
 pub struct PackedBatch {
     pub bits: Vec<u64>,
     pub scale: Vec<f32>,
+    pub rows: usize,
+    pub planes: usize,
     pub legal: Vec<i32>,
     pub lens: Vec<u16>,
     pub width: usize,
-    dense: Vec<f32>,
     flat: Vec<i32>,
     row: Vec<f32>,
-}
-
-/// One observation plane as `(mask, scale)`: bit i set where the plane is
-/// nonzero, and the single value every nonzero square holds.
-///
-/// Panics if a plane holds two different nonzero values, which would make the
-/// packing lossy. Every plane the encoders write today is a 0/1 mask or a
-/// uniform fill; a future encoder that breaks that must fail here, loudly,
-/// rather than train on a silently different input.
-pub fn pack_plane(plane: &[f32]) -> (u64, f32) {
-    let mut mask = 0u64;
-    let mut scale = 0.0f32;
-    for (i, &v) in plane.iter().enumerate() {
-        if v != 0.0 {
-            assert!(mask == 0 || v == scale, "plane is not mask x scale: {v} vs {scale}");
-            mask |= 1 << i;
-            scale = v;
-        }
-    }
-    (mask, scale)
 }
 
 /// Does this move get the full budget? A fresh draw per move.
@@ -217,12 +201,24 @@ fn budget(cfg: Config, pcr: Option<Pcr>, full: bool) -> Config {
     }
 }
 
+/// Where a slot writes the observation of the leaf it stops at.
+enum Row<'a> {
+    Dense(&'a mut [f32]),
+    Packed(&'a mut [u64], &'a mut [f32]),
+}
+
+/// Every slot's row of a batch: the whole buffer and one row's width.
+enum Rows<'a> {
+    Dense(&'a mut [f32], usize),
+    Packed(&'a mut [u64], &'a mut [f32], usize),
+}
+
 impl<G: Game> Slot<G> {
     /// Step this one game to its next leaf, encoding it into `row`.
     ///
     /// `row` is exactly this slot's `obs_len` floats and nobody else's, which is
     /// what makes the whole function safe to run on its own thread.
-    fn step(&mut self, row: &mut [f32], cfg: Config, pcr: Option<Pcr>, max_plies: usize) {
+    fn step(&mut self, row: Row<'_>, cfg: Config, pcr: Option<Pcr>, max_plies: usize) {
         self.produced = false;
         if !self.live {
             return;
@@ -232,7 +228,11 @@ impl<G: Game> Slot<G> {
             let st = prof_time!("ns_prepare", self.search.prepare());
             match st {
                 Status::NeedsEval => {
-                    prof_time!("ns_encode", self.search.pending().encode(row));
+                    let pos = self.search.pending();
+                    prof_time!("ns_encode", match row {
+                        Row::Dense(out) => pos.encode(out),
+                        Row::Packed(bits, scale) => pos.encode_packed(bits, scale),
+                    });
                     self.produced = true;
                     return;
                 }
@@ -461,47 +461,67 @@ impl<G: Game> SelfPlay<G> {
     /// here and once in `encode`, which is 30 KB of pointless memset per
     /// evaluation.
     pub fn next_batch(&mut self, out: &mut Vec<f32>) -> usize {
-        let __nb = std::time::Instant::now();
-        prof_count!("n_next_batch", 1);
         let obs = obs_len::<G>();
         let needed = self.slots.len() * obs;
         if out.len() < needed {
             out.resize(needed, 0.0);
         }
-        self.batch_slots.clear();
+        self.fill_batch(Rows::Dense(&mut out[..needed], obs))
+    }
 
-        // Each slot encodes into *its own* row, out[i*obs ..][..obs], so the
-        // shards below write to disjoint memory and need no coordination. The
-        // batch is compacted afterwards, which costs nothing until games start
-        // running out: while every slot is live, every slot produces a row and
-        // row i is already in the right place.
+    /// Step every live slot to its next leaf, each writing its own row, then
+    /// compact the produced rows to the front.
+    ///
+    /// Each slot encodes into *its own* row, so the shards below write to
+    /// disjoint memory and need no coordination. Compaction costs nothing until
+    /// games start running out: while every slot is live, every slot produces a
+    /// row and row i is already in the right place.
+    fn fill_batch(&mut self, mut rows: Rows<'_>) -> usize {
+        let __nb = std::time::Instant::now();
+        prof_count!("n_next_batch", 1);
+        self.batch_slots.clear();
         let (cfg, pcr, max_plies) = (self.cfg, self.pcr, self.max_plies);
-        let rows = &mut out[..needed];
 
         #[cfg(feature = "parallel")]
         if let Some(pool) = &self.pool {
             use rayon::prelude::*;
             let per = self.slots.len().div_ceil(self.threads);
             let slots = &mut self.slots;
-            pool.install(|| {
-                slots
-                    .par_chunks_mut(per)
-                    .zip(rows.par_chunks_mut(per * obs))
-                    .for_each(|(shard, buf)| {
-                        for (k, slot) in shard.iter_mut().enumerate() {
-                            slot.step(&mut buf[k * obs..(k + 1) * obs], cfg, pcr, max_plies);
-                        }
-                    });
+            pool.install(|| match &mut rows {
+                Rows::Dense(buf, w) => {
+                    let w = *w;
+                    slots.par_chunks_mut(per).zip(buf.par_chunks_mut(per * w)).for_each(
+                        |(shard, buf)| {
+                            for (k, slot) in shard.iter_mut().enumerate() {
+                                slot.step(Row::Dense(&mut buf[k * w..(k + 1) * w]), cfg, pcr, max_plies);
+                            }
+                        },
+                    );
+                }
+                Rows::Packed(bits, scale, w) => {
+                    let w = *w;
+                    slots
+                        .par_chunks_mut(per)
+                        .zip(bits.par_chunks_mut(per * w))
+                        .zip(scale.par_chunks_mut(per * w))
+                        .for_each(|((shard, bits), scale)| {
+                            for (k, slot) in shard.iter_mut().enumerate() {
+                                let r = k * w..(k + 1) * w;
+                                slot.step(
+                                    Row::Packed(&mut bits[r.clone()], &mut scale[r]),
+                                    cfg,
+                                    pcr,
+                                    max_plies,
+                                );
+                            }
+                        });
+                }
             });
         } else {
-            for (i, slot) in self.slots.iter_mut().enumerate() {
-                slot.step(&mut rows[i * obs..(i + 1) * obs], cfg, pcr, max_plies);
-            }
+            self.fill_sequential(&mut rows);
         }
         #[cfg(not(feature = "parallel"))]
-        for (i, slot) in self.slots.iter_mut().enumerate() {
-            slot.step(&mut rows[i * obs..(i + 1) * obs], cfg, pcr, max_plies);
-        }
+        self.fill_sequential(&mut rows);
 
         // Close the gaps left by slots that have run out of games. A copy only
         // happens once a row's index has drifted from its slot's, so the steady
@@ -512,7 +532,13 @@ impl<G: Game> SelfPlay<G> {
             }
             let dst = self.batch_slots.len();
             if dst != i {
-                rows.copy_within(i * obs..(i + 1) * obs, dst * obs);
+                match &mut rows {
+                    Rows::Dense(buf, w) => buf.copy_within(i * *w..(i + 1) * *w, dst * *w),
+                    Rows::Packed(bits, scale, w) => {
+                        bits.copy_within(i * *w..(i + 1) * *w, dst * *w);
+                        scale.copy_within(i * *w..(i + 1) * *w, dst * *w);
+                    }
+                }
             }
             self.batch_slots.push(i);
         }
@@ -521,6 +547,20 @@ impl<G: Game> SelfPlay<G> {
         prof_count!("n_evals", self.batch_slots.len());
         prof_count!("ns_next_batch", __nb.elapsed().as_nanos());
         self.batch_slots.len()
+    }
+
+    fn fill_sequential(&mut self, rows: &mut Rows<'_>) {
+        let (cfg, pcr, max_plies) = (self.cfg, self.pcr, self.max_plies);
+        for (i, slot) in self.slots.iter_mut().enumerate() {
+            let row = match rows {
+                Rows::Dense(buf, w) => Row::Dense(&mut buf[i * *w..(i + 1) * *w]),
+                Rows::Packed(bits, scale, w) => {
+                    let r = i * *w..(i + 1) * *w;
+                    Row::Packed(&mut bits[r.clone()], &mut scale[r])
+                }
+            };
+            slot.step(row, cfg, pcr, max_plies);
+        }
     }
 
     /// Feed back one forward pass.
@@ -584,34 +624,26 @@ impl<G: Game> SelfPlay<G> {
     /// The dense batch is ~30 KB of f32 per position, almost all of it 0.0 and
     /// 1.0, and the network's answer is `POLICY_LEN` logits of which ~35 are
     /// read. On a 3090 at batch 1024 moving those two arrays cost about three
-    /// times the forward pass itself. Here every plane becomes one bit mask and
-    /// one scale (exact: each plane is a mask times a single value, which
-    /// [`pack_plane`] asserts), and the legal policy indices travel along so the
-    /// device can gather just those logits for [`SelfPlay::submit_packed`].
+    /// times the forward pass itself. Here every plane is one bit mask and one
+    /// scale, written directly by [`Game::encode_packed`] -- never as floats --
+    /// and the legal policy indices travel along so the device can gather just
+    /// those logits for [`SelfPlay::submit_packed`].
     pub fn next_batch_packed(&mut self, b: &mut PackedBatch) -> usize {
-        let n = self.next_batch(&mut b.dense);
         let (planes, h, w) = G::OBS_SHAPE;
-        let hw = h * w;
-        assert!(hw <= 64, "a plane must fit one u64 mask");
-        let obs = obs_len::<G>();
-
-        b.bits.clear();
-        b.scale.clear();
-        b.bits.resize(n * planes, 0);
-        b.scale.resize(n * planes, 0.0);
-        for r in 0..n {
-            let row = &b.dense[r * obs..(r + 1) * obs];
-            for p in 0..planes {
-                let (m, s) = pack_plane(&row[p * hw..(p + 1) * hw]);
-                b.bits[r * planes + p] = m;
-                b.scale[r * planes + p] = s;
-            }
+        assert!(h * w <= 64, "a plane must fit one u64 mask");
+        let needed = self.slots.len() * planes;
+        if b.bits.len() < needed {
+            b.bits.resize(needed, 0);
+            b.scale.resize(needed, 0.0);
         }
+        let n = self.fill_batch(Rows::Packed(&mut b.bits[..needed], &mut b.scale[..needed], planes));
+        b.rows = n;
+        b.planes = planes;
 
         // Legal indices, padded to the batch's widest row. Padding repeats
         // index 0, which the device gathers harmlessly and the scatter ignores.
         b.lens.clear();
-        let mut flat = std::mem::take(&mut b.legal);
+        let mut flat = std::mem::take(&mut b.flat);
         flat.clear();
         for &slot in &self.batch_slots {
             let before = flat.len();

@@ -420,6 +420,70 @@ impl Game for ChessPos {
 
         fill_plane_with(out, meta + 6, self.pos.halfmoves() as f32 / 100.0);
     }
+
+    /// [`ChessPos::encode`], written as masks straight from the bitboards.
+    ///
+    /// Mirrors `encode` line for line; `encode_packed_matches_dense` holds the
+    /// two to bit equality. Flipping the board vertically for Black is
+    /// reversing the byte order of a bitboard, since a byte is a rank.
+    fn encode_packed(&self, bits: &mut [u64], scale: &mut [f32]) {
+        debug_assert_eq!(bits.len(), TOTAL_PLANES);
+        bits.fill(0);
+        scale.fill(0.0);
+        let mut set = |p: usize, mask: u64, value: f32| {
+            if mask != 0 && value != 0.0 {
+                bits[p] = mask;
+                scale[p] = value;
+            }
+        };
+
+        let us = self.pos.turn();
+        let them = !us;
+        let flip = us == Color::Black;
+        let rel = |bb: shakmaty::Bitboard| {
+            let m = u64::from(bb);
+            if flip { m.swap_bytes() } else { m }
+        };
+
+        let reps = self.repetition_count();
+        for (step, node) in self.history_iter().take(HISTORY).enumerate() {
+            let base = step * PLANES_PER_STEP;
+            for (i, &role) in ROLES.iter().enumerate() {
+                for (offset, color) in [(0, us), (6, them)] {
+                    set(base + offset + i, rel(node.board.by_piece(Piece { color, role })), 1.0);
+                }
+            }
+            if step == 0 {
+                if reps >= 2 {
+                    set(base + 12, u64::MAX, 1.0);
+                }
+                if reps >= 3 {
+                    set(base + 13, u64::MAX, 1.0);
+                }
+            }
+        }
+
+        let meta = HISTORY * PLANES_PER_STEP;
+        if us == Color::Black {
+            set(meta, u64::MAX, 1.0);
+        }
+        set(meta + 1, u64::MAX, self.pos.fullmoves().get() as f32 / 100.0);
+        let castles = self.pos.castles();
+        for (i, (color, side)) in [
+            (us, CastlingSide::KingSide),
+            (us, CastlingSide::QueenSide),
+            (them, CastlingSide::KingSide),
+            (them, CastlingSide::QueenSide),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if castles.has(color, side) {
+                set(meta + 2 + i, u64::MAX, 1.0);
+            }
+        }
+        set(meta + 6, u64::MAX, self.pos.halfmoves() as f32 / 100.0);
+    }
 }
 
 #[inline]
@@ -676,6 +740,60 @@ mod tests {
             ChessPos::from_fen("rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3")
                 .unwrap();
         assert_eq!(pos.outcome(), Some(Outcome::Loss));
+    }
+
+    /// The direct bitboard encoder must be exactly the dense one, packed.
+    /// Covers both colours to move, captures, castling rights coming and going,
+    /// promotions, and -- via a knight shuffle -- both repetition planes.
+    #[test]
+    fn encode_packed_matches_dense() {
+        use crate::game::pack_plane;
+        let check = |pos: &ChessPos| {
+            let mut dense = vec![0.0f32; TOTAL_PLANES * 64];
+            pos.encode(&mut dense);
+            let (mut bits, mut scale) = ([0u64; TOTAL_PLANES], [0f32; TOTAL_PLANES]);
+            pos.encode_packed(&mut bits, &mut scale);
+            for p in 0..TOTAL_PLANES {
+                assert_eq!(
+                    (bits[p], scale[p]),
+                    pack_plane(&dense[p * 64..(p + 1) * 64]),
+                    "plane {p} at FEN {}",
+                    pos.fen()
+                );
+            }
+        };
+
+        let mut shuffle = ChessPos::new();
+        for _ in 0..2 {
+            for uci in ["g1f3", "g8f6", "f3g1", "f6g8"] {
+                let mv = moves_of(&shuffle)
+                    .into_iter()
+                    .find(|&m| m.to_uci(shakmaty::CastlingMode::Standard).to_string() == uci)
+                    .expect("shuffle move is legal");
+                shuffle.play(mv);
+                check(&shuffle);
+            }
+        }
+        assert!(shuffle.repetition_count() >= 3, "shuffle should reach a threefold");
+
+        let mut rng: u64 = 0x2545F4914F6CDD1D;
+        let mut positions = 0;
+        for _ in 0..200 {
+            let mut pos = ChessPos::new();
+            for _ in 0..200 {
+                check(&pos);
+                positions += 1;
+                let legal = moves_of(&pos);
+                if legal.is_empty() || pos.outcome().is_some() {
+                    break;
+                }
+                rng ^= rng << 13;
+                rng ^= rng >> 7;
+                rng ^= rng << 17;
+                pos.play(legal[(rng % legal.len() as u64) as usize]);
+            }
+        }
+        assert!(positions > 10_000);
     }
 
     #[test]

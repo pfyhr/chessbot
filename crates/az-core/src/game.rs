@@ -117,6 +117,43 @@ pub trait Game: Clone + Send + Sync + 'static {
     /// Write the observation planes into `out`, which is exactly `OBS_SHAPE`
     /// elements long. Always from the side-to-move's perspective.
     fn encode(&self, out: &mut [f32]);
+
+    /// [`Game::encode`] as one `(mask, scale)` pair per plane, exactly what
+    /// [`pack_plane`] makes of each dense plane. `bits` and `scale` are
+    /// `OBS_SHAPE.0` long; planes must have at most 64 squares.
+    ///
+    /// The default goes through the dense encoding. Games on a hot path
+    /// should override it to write masks directly -- for chess the dense
+    /// detour was most of the driver's cost.
+    fn encode_packed(&self, bits: &mut [u64], scale: &mut [f32]) {
+        let (planes, h, w) = Self::OBS_SHAPE;
+        let hw = h * w;
+        let mut dense = vec![0.0f32; planes * hw];
+        self.encode(&mut dense);
+        for p in 0..planes {
+            (bits[p], scale[p]) = pack_plane(&dense[p * hw..(p + 1) * hw]);
+        }
+    }
+}
+
+/// One observation plane as `(mask, scale)`: bit i set where the plane is
+/// nonzero, and the single value every nonzero square holds.
+///
+/// Panics if a plane holds two different nonzero values, which would make the
+/// packing lossy. Every plane the encoders write today is a 0/1 mask or a
+/// uniform fill; a future encoder that breaks that must fail here, loudly,
+/// rather than train on a silently different input.
+pub fn pack_plane(plane: &[f32]) -> (u64, f32) {
+    let mut mask = 0u64;
+    let mut scale = 0.0f32;
+    for (i, &v) in plane.iter().enumerate() {
+        if v != 0.0 {
+            assert!(mask == 0 || v == scale, "plane is not mask x scale: {v} vs {scale}");
+            mask |= 1 << i;
+            scale = v;
+        }
+    }
+    (mask, scale)
 }
 
 /// Total number of floats in one observation.

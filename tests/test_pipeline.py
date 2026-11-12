@@ -59,10 +59,12 @@ def test_too_many_pools_is_rejected():
         pipeline.make_pools(pools=5, concurrency=4, games=8, seed=0, **KW)
 
 
-def test_packed_batches_are_the_dense_batches(net):
-    """Same seed, same answers: every packed batch must unpack to the dense one."""
+@pytest.mark.parametrize("threads", [1, 3])
+def test_packed_batches_are_the_dense_batches(net, threads):
+    """Same seed, same answers: every packed batch must unpack to the dense one,
+    including when the packed side shards its slots across driver threads."""
     dense = cc.ChessSelfPlay(concurrency=5, total_games=5, seed=11, **KW)
-    packed = cc.ChessSelfPlay(concurrency=5, total_games=5, seed=11, **KW)
+    packed = cc.ChessSelfPlay(concurrency=5, total_games=5, seed=11, threads=threads, **KW)
     batches = 0
     while (obs := dense.next_batch()) is not None:
         bits, scale, legal = packed.next_batch_packed()

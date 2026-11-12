@@ -382,8 +382,12 @@ impl PyChessSelfPlay {
         let err = |e: ndarray::ShapeError| PyValueError::new_err(e.to_string());
         let b = &self.packed;
         Ok(Some((
-            Array2::from_shape_vec((n, planes), b.bits.clone()).map_err(err)?.into_pyarray(py),
-            Array2::from_shape_vec((n, planes), b.scale.clone()).map_err(err)?.into_pyarray(py),
+            Array2::from_shape_vec((n, planes), b.bits[..n * planes].to_vec())
+                .map_err(err)?
+                .into_pyarray(py),
+            Array2::from_shape_vec((n, planes), b.scale[..n * planes].to_vec())
+                .map_err(err)?
+                .into_pyarray(py),
             Array2::from_shape_vec((n, b.width), b.legal.clone()).map_err(err)?.into_pyarray(py),
         )))
     }
