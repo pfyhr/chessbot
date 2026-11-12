@@ -96,3 +96,31 @@ def test_legal_rows_hold_exactly_the_legal_moves():
     for row in legal:  # every game starts from the initial position
         assert sorted(row[:20].tolist()) == start
         assert (row[20:] == 0).all()
+
+
+def _devices():
+    out = ["cpu"]
+    if torch.backends.mps.is_available():
+        out.append("mps")
+    if torch.cuda.is_available():
+        out.append("cuda")
+    return out
+
+
+@pytest.mark.parametrize("device", _devices())
+def test_unpack_obs_is_exact_on_every_device(device):
+    """int64 shifts and `& 1` must be exact wherever the packed bridge runs.
+
+    Masks are random with bit 63 set on about half of them, the case an
+    arithmetic shift could get wrong; the reference is a plain numpy unpack.
+    """
+    rng = np.random.default_rng(0)
+    planes, h, w = cc.OBS_SHAPE
+    bits = rng.integers(0, 2**63, size=(64, planes), dtype=np.int64)
+    bits[rng.random(bits.shape) < 0.5] |= np.int64(-2**63)
+    scale = rng.random((64, planes)).astype(np.float32)
+    u = bits.view(np.uint64)[..., None] >> np.arange(h * w, dtype=np.uint64)
+    ref = ((u & np.uint64(1)).astype(np.float32) * scale[..., None]).reshape(64, planes, h, w)
+    got = pipeline.unpack_obs(torch.from_numpy(bits).to(device),
+                              torch.from_numpy(scale).to(device), cc.OBS_SHAPE)
+    np.testing.assert_array_equal(got.cpu().numpy(), ref)
