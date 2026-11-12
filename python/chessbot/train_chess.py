@@ -36,7 +36,8 @@ import numpy as np
 import torch
 
 from . import chess_eval as ev
-from .net import Net, load_checkpoint, losses, save_checkpoint, wdl_to_scalar
+from . import pipeline
+from .net import Net, load_checkpoint, losses, save_checkpoint
 
 
 def pick_device(requested: str) -> str:
@@ -49,62 +50,32 @@ def pick_device(requested: str) -> str:
     return "cpu"
 
 
-def bucket_size(n: int, step: int, cap: int) -> int:
-    """Round a batch up to the next multiple of `step`.
-
-    Self-play hands the network a different batch size on almost every call --
-    mean 108, median 82, hundreds of distinct values -- because a game sits out
-    a batch whenever its leaf is terminal or its search has just finished. That
-    variation is what stops `torch.compile` fusing anything: with dynamic shapes
-    it measured *slower* than eager, while a fixed shape measured 2.22x faster.
-
-    Rounding to a handful of shapes costs ~1.27x in padded positions that get
-    computed and thrown away, and buys the fusion. Measured net: 2.08x on the
-    positions that actually count.
-    """
-    return min(cap, ((n + step - 1) // step) * step)
-
-
 def selfplay_generation(net, device: str, args, seed: int, infer=None):
     """`infer` is the handle used for forward passes -- a compiled wrapper when
     one is available, otherwise `net` itself. Both share parameters, so weights
     updated by training are seen here without any copying."""
     net.eval()
     infer = infer if infer is not None else net
-    sp = cc.ChessSelfPlay(
+    pools = pipeline.make_pools(
+        pools=args.pools,
         concurrency=args.concurrency,
-        total_games=args.games,
+        games=args.games,
+        seed=seed,
         sims=args.sims,
         max_considered=args.considered,
         max_plies=args.max_plies,
-        seed=seed,
         pcr_prob=args.pcr_prob,
         fast_sims=args.fast_sims,
         fast_considered=args.fast_considered,
         threads=args.driver_threads,
     )
-
-    step = args.batch_bucket
-    while (obs := sp.next_batch()) is not None:
-        n = len(obs)
-        x = torch.from_numpy(obs).to(device)
-        if step > 1:
-            b = bucket_size(n, step, args.concurrency)
-            if b > n:
-                x = torch.cat([x, x.new_zeros(b - n, *x.shape[1:])], 0)
-        with torch.no_grad():
-            logits, wdl = infer(x)
-        # Drop the padding rows before they reach the driver.
-        logits, wdl = logits[:n], wdl[:n]
-        values = wdl_to_scalar(wdl.float()).cpu().numpy()
-        sp.submit(
-            np.ascontiguousarray(logits.float().cpu().numpy()),
-            np.ascontiguousarray(values.astype(np.float32)),
-        )
-
-    obs, policy, z, mask, pmask = sp.take_training_data()
+    # The cap is per pool: a pool never has more live games than its slots.
+    forward = pipeline.make_forward(infer, device, bucket=args.batch_bucket,
+                                    cap=-(-args.concurrency // args.pools))
+    (obs, policy, z, mask, pmask), stats = pipeline.merge(
+        pipeline.run(pools, forward))
     # float16 in the buffer: full precision here would be ~4 GB per generation.
-    return (obs.astype(np.float16), policy.astype(np.float16), z, mask, pmask), sp.stats()
+    return (obs.astype(np.float16), policy.astype(np.float16), z, mask, pmask), stats
 
 
 def train_steps(net, opt, buffer, args, device: str) -> dict[str, float]:
@@ -163,6 +134,9 @@ def main() -> None:
                          "measured against rather than assumed worse")
     ap.add_argument("--games", type=int, default=256)
     ap.add_argument("--concurrency", type=int, default=256)
+    ap.add_argument("--pools", type=int, default=1,
+                    help="independent game pools on separate threads, so one pool's "
+                         "tree work overlaps another's forward pass")
     ap.add_argument("--driver-threads", type=int, default=1,
                     help="self-play driver threads, sharded by game. The seed "
                          "reproduces the same games at any value, so this is a "

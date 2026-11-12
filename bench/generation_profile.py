@@ -26,10 +26,10 @@ import contextlib
 import time
 
 import chessbot_core as cc
-import numpy as np
 import torch
 
-from chessbot.net import Net, wdl_to_scalar
+from chessbot import pipeline
+from chessbot.net import Net
 
 
 # What "fp32" actually means on CUDA, which is not what it sounds like.
@@ -92,49 +92,35 @@ def profile_selfplay(net, device: str, args) -> dict:
 
     `next_batch` and `submit` are the Rust side: tree descent, expansion,
     backup, and the bridge crossing. Everything between them is the network.
+
+    With `--pools N > 1` the pools run on their own threads and their phases
+    overlap, so `gpu` and `driver` are summed per pool and can exceed `total`.
+    `total` and `samples` are then the only numbers that compare across N.
     """
     net.eval()
-    sp = cc.ChessSelfPlay(
+    pools = pipeline.make_pools(
+        pools=args.pools,
         concurrency=args.concurrency,
-        total_games=args.games,
+        games=args.games,
+        seed=12345,
         sims=args.sims,
         max_considered=args.considered,
         max_plies=args.max_plies,
-        seed=12345,
         threads=args.driver_threads,
     )
-    t_gpu = t_driver = 0.0
-    evals = 0
+    forward = pipeline.make_forward(net, device, amp=args.amp)
     t0 = time.perf_counter()
-    while True:
-        a = time.perf_counter()
-        obs = sp.next_batch()
-        t_driver += time.perf_counter() - a
-        if obs is None:
-            break
-
-        a = time.perf_counter()
-        with torch.no_grad(), autocast(device, args.amp):
-            logits, wdl = net(torch.from_numpy(obs).to(device))
-            values = wdl_to_scalar(wdl.float()).cpu().numpy()
-        sync(device)
-        t_gpu += time.perf_counter() - a
-        evals += len(obs)
-
-        a = time.perf_counter()
-        sp.submit(
-            np.ascontiguousarray(logits.float().cpu().numpy()),
-            np.ascontiguousarray(values.astype(np.float32)),
-        )
-        t_driver += time.perf_counter() - a
-
-    obs, policy, z, vmask, pmask = sp.take_training_data()
+    results = pipeline.run(pools, forward)
     total = time.perf_counter() - t0
+    (obs, *_), _stats = pipeline.merge(results)
+    t_gpu = sum(r.timing.gpu for r in results)
+    t_driver = sum(r.timing.driver for r in results)
+    evals = sum(r.timing.evals for r in results)
     return {
         "total": total,
         "gpu": t_gpu,
         "driver": t_driver,
-        "other": total - t_gpu - t_driver,
+        "other": max(total - t_gpu - t_driver, 0.0),
         "evals": evals,
         "pos_per_sec": evals / t_gpu if t_gpu else 0.0,
         "samples": len(obs),
@@ -191,7 +177,8 @@ def report(sp: dict, train_s: float, args, device: str) -> None:
 
     print(f"\n{'=' * 62}")
     print(f"generation profile  device={device}  concurrency={args.concurrency}  "
-          f"games={args.games}  sims={args.sims}  driver-threads={args.driver_threads}")
+          f"games={args.games}  sims={args.sims}  driver-threads={args.driver_threads}  "
+          f"pools={args.pools}")
     print("=" * 62)
     print(f"{'self-play, network forward':34s} {sp['gpu']:7.1f}s")
     print(f"{'self-play, Rust driver + bridge':34s} {sp['driver']:7.1f}s")
@@ -199,9 +186,15 @@ def report(sp: dict, train_s: float, args, device: str) -> None:
     print(f"{'training, ' + str(args.steps) + ' steps':34s} {train_s:7.1f}s")
     print("-" * 62)
     print(f"{'generation total (no eval)':34s} {gen:7.1f}s")
-    print(f"{'GPU-bound fraction':34s} {f:7.1%}")
+    if args.pools == 1:
+        print(f"{'GPU-bound fraction':34s} {f:7.1%}")
     print(f"{'inference throughput':34s} {sp['pos_per_sec']:7,.0f} pos/sec")
     print(f"{'positions produced':34s} {sp['samples']:7,d}")
+    print(f"{'positions per wall second':34s} {sp['samples'] / gen:7,.0f}")
+    if args.pools > 1:
+        print("  (pools overlap: forward and driver are summed per pool, so they")
+        print("   exceed the total; compare runs by total and positions per second)")
+        return  # the GPU fraction and Amdahl below assume the phases take turns
     # The number that transfers between machines. Wall clock does not: it is
     # dominated by whichever GPU happens to be attached. Driver seconds are the
     # CPU's half of the generation, and they are what decides whether a rented
@@ -223,6 +216,8 @@ def main() -> None:
     ap.add_argument("--games", type=int, default=64,
                     help="fewer than a real generation; the split is what matters")
     ap.add_argument("--concurrency", type=int, default=256)
+    ap.add_argument("--pools", type=int, default=1,
+                    help="independent game pools on separate threads (double buffering)")
     ap.add_argument("--driver-threads", type=int, default=1,
                     help="self-play driver threads, sharded by game")
     ap.add_argument("--sims", type=int, default=32)

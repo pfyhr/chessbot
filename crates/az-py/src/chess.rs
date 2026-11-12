@@ -329,8 +329,12 @@ impl PyChessSelfPlay {
     }
 
     /// Feed back one forward pass: `logits` is `(N, 4672)`, `values` is `(N,)`.
+    ///
+    /// Releases the GIL for the tree backup, so that with several pools on
+    /// several Python threads one pool's backup overlaps another's forward.
     fn submit(
         &mut self,
+        py: Python<'_>,
         logits: PyReadonlyArray2<f32>,
         values: PyReadonlyArray1<f32>,
     ) -> PyResult<()> {
@@ -343,7 +347,8 @@ impl PyChessSelfPlay {
                 values.len()
             )));
         }
-        self.inner.submit(logits, values);
+        let inner = &mut self.inner;
+        py.detach(|| inner.submit(logits, values));
         Ok(())
     }
 
