@@ -188,7 +188,8 @@ class GraphForward:
 
     packed = True
 
-    def __init__(self, infer, device: str, *, bucket: int, cap: int, amp, pools: int):
+    def __init__(self, infer, device: str, *, bucket: int, cap: int, amp, pools: int,
+                 channels_last: bool = False):
         c, h, w = cc.OBS_SHAPE
         self.device, self.bucket, self.cap = device, bucket, cap
         sizes = sorted({bucket_size(n, bucket, cap) for n in range(1, cap + 1)}, reverse=True)
@@ -196,6 +197,8 @@ class GraphForward:
 
         def body(bits, scale):
             x = unpack_obs(bits, scale, cc.OBS_SHAPE)
+            if channels_last:  # the net must have been converted to match
+                x = x.contiguous(memory_format=torch.channels_last)
             ac = (torch.autocast(device_type=ac_type, dtype=amp)
                   if amp is not None else contextlib.nullcontext())
             with torch.no_grad(), ac:

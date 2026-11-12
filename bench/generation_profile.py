@@ -135,7 +135,8 @@ def make_profile_forward(net, device: str, args):
             raise SystemExit("--graphs needs --bridge packed")
         return pipeline.GraphForward(net, device, bucket=args.bucket,
                                      cap=-(-args.concurrency // args.pools),
-                                     amp=args.amp, pools=args.pools)
+                                     amp=args.amp, pools=args.pools,
+                                     channels_last=args.channels_last)
     return pipeline.make_forward(net, device, amp=args.amp, packed=args.bridge == "packed")
 
 
@@ -264,6 +265,8 @@ def main() -> None:
     ap.add_argument("--concurrency", type=int, default=256)
     ap.add_argument("--stream", action="store_true",
                     help="measure steady-state streaming self-play (warm-up generation first)")
+    ap.add_argument("--channels-last", action="store_true",
+                    help="NHWC weights and inputs (only applied inside --graphs)")
     ap.add_argument("--graphs", action="store_true",
                     help="CUDA graphs per bucket size (needs --bridge packed)")
     ap.add_argument("--bucket", type=int, default=64,
@@ -302,8 +305,14 @@ def main() -> None:
     planes, h, w = cc.OBS_SHAPE
     net = Net(planes, (h, w), cc.POLICY_LEN, args.blocks, args.channels).to(device)
     params = sum(p.numel() for p in net.parameters())
+    if args.channels_last:
+        net = net.to(memory_format=torch.channels_last)
     if args.compile:
-        net = torch.compile(net)
+        # One compiled graph per bucket shape. dynamic=False keeps fixed-shape
+        # fusion; the raised limit stops dynamo silently falling back to eager
+        # once the bucket count passes its default of 8 recompiles.
+        torch._dynamo.config.cache_size_limit = 64
+        net = torch.compile(net, dynamic=False)
     print(f"torch {torch.__version__}  device={device}  net={args.blocks}x{args.channels} "
           f"({params / 1e6:.2f}M params)  compile={args.compile}")
     print(f"precision: {args.precision}  ->  {effective}  autocast={args.amp}")
