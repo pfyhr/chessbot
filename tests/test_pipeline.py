@@ -126,3 +126,46 @@ def test_unpack_obs_is_exact_on_every_device(device):
     got = pipeline.unpack_obs(torch.from_numpy(bits).to(device),
                               torch.from_numpy(scale).to(device), cc.OBS_SHAPE)
     np.testing.assert_array_equal(got.cpu().numpy(), ref)
+
+
+@pytest.mark.parametrize("pools", [1, 2])
+def test_stream_never_drains_and_counts_each_game_once(net, pools):
+    stream = pipeline.Stream(pools=pools, concurrency=4, seed=5, **KW)
+    forward = pipeline.make_forward(net, "cpu", packed=True)
+    total_games = total_samples = 0
+    for _ in range(3):
+        data, stats, timings = stream.generation(5, forward)
+        assert stats["games"] >= 5
+        n = len(data[0])
+        assert all(len(a) == n for a in data)
+        total_games += stats["games"]
+        total_samples += n
+        # Slots are refilled, not retired: the next batch is still full.
+        assert all(not sp.is_done() for sp in stream.pools)
+    assert total_games == sum(sp.games_completed for sp in stream.pools)
+    # Each finished game is returned once: KW caps games at 12 plies.
+    assert total_samples <= total_games * KW["max_plies"]
+    assert total_samples >= total_games
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA graphs need CUDA")
+def test_graph_forward_matches_the_plain_forward():
+    torch.manual_seed(0)
+    planes, h, w = cc.OBS_SHAPE
+    cnet = Net(planes, (h, w), cc.POLICY_LEN, 2, 16).cuda().eval()
+    plain = pipeline.make_forward(cnet, "cuda", packed=True)
+    graphs = pipeline.GraphForward(cnet, "cuda", bucket=8, cap=24, amp=None, pools=2)
+    sp = cc.ChessSelfPlay(concurrency=21, total_games=21, seed=4, **KW)
+    seen = set()
+    for _ in range(30):
+        batch = sp.next_batch_packed()
+        if batch is None:
+            break
+        seen.add(len(batch[0]))
+        ref = plain(batch)
+        for k in range(2):
+            got = graphs.for_pool(k)(batch)
+            for a, b in zip(ref, got):
+                np.testing.assert_allclose(a, b, rtol=1e-5, atol=1e-6)
+        sp.submit_packed(*ref)
+    assert any(n % 8 for n in seen), "never exercised a padded bucket"

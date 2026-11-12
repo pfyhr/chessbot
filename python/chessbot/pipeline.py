@@ -87,11 +87,13 @@ def make_pools(*, pools: int, concurrency: int, games: int, seed: int, **kw) -> 
     ]
 
 
-def _drive(sp, forward, timing: PoolTiming) -> None:
+def _drive(sp, forward, timing: PoolTiming, until: int | None = None) -> None:
+    """Drive one pool until it runs out of games or, with `until`, until its
+    cumulative `games_completed` reaches that many."""
     packed = getattr(forward, "packed", False)
     next_batch = sp.next_batch_packed if packed else sp.next_batch
     submit = sp.submit_packed if packed else sp.submit
-    while True:
+    while until is None or sp.games_completed < until:
         a = time.perf_counter()
         batch = next_batch()
         timing.driver += time.perf_counter() - a
@@ -168,30 +170,157 @@ def make_forward(infer, device: str, bucket: int = 1, cap: int | None = None, am
     return forward_dense
 
 
+class GraphForward:
+    """The packed forward as CUDA graphs: one per bucket size, per pool.
+
+    At batch 1024 the network is ~40 kernels and the glue around it a dozen
+    more, each a separate launch from Python. A graph replays all of them as
+    one. Shapes must be fixed, so batches are padded up to a bucket, exactly
+    as for `torch.compile`.
+
+    Everything is captured up front, on the calling thread, before any pool
+    starts: capturing (or compiling) from two pool threads at once is what
+    hung the first `--compile` run. Each pool owns its graphs, its static
+    input buffers and its memory pool, so pools on different threads never
+    write over each other's inputs or outputs. The gather of legal logits
+    stays outside the graph because its width changes every batch.
+    """
+
+    packed = True
+
+    def __init__(self, infer, device: str, *, bucket: int, cap: int, amp, pools: int):
+        c, h, w = cc.OBS_SHAPE
+        self.device, self.bucket, self.cap = device, bucket, cap
+        sizes = sorted({bucket_size(n, bucket, cap) for n in range(1, cap + 1)}, reverse=True)
+        ac_type = device.split(":")[0]
+
+        def body(bits, scale):
+            x = unpack_obs(bits, scale, cc.OBS_SHAPE)
+            ac = (torch.autocast(device_type=ac_type, dtype=amp)
+                  if amp is not None else contextlib.nullcontext())
+            with torch.no_grad(), ac:
+                logits, wdl = infer(x)
+            return logits, wdl_to_scalar(wdl.float())
+
+        self.sets = []
+        for _ in range(pools):
+            mempool = torch.cuda.graph_pool_handle()
+            graphs = {}
+            for b in sizes:  # largest first, so smaller graphs reuse its memory
+                bits = torch.zeros(b, c, dtype=torch.int64, device=device)
+                scale = torch.zeros(b, c, dtype=torch.float32, device=device)
+                side = torch.cuda.Stream()
+                side.wait_stream(torch.cuda.current_stream())
+                with torch.cuda.stream(side):
+                    for _ in range(3):  # cuDNN autotuning and any compile happen here
+                        body(bits, scale)
+                torch.cuda.current_stream().wait_stream(side)
+                graph = torch.cuda.CUDAGraph()
+                with torch.cuda.graph(graph, pool=mempool):
+                    logits, values = body(bits, scale)
+                graphs[b] = (graph, bits, scale, logits, values)
+            self.sets.append(graphs)
+        torch.cuda.synchronize()
+
+    def for_pool(self, k: int):
+        graphs = self.sets[k]
+
+        def forward(batch):
+            bits, scale, legal = batch
+            n = len(bits)
+            graph, s_bits, s_scale, logits, values = graphs[bucket_size(n, self.bucket, self.cap)]
+            s_bits[:n].copy_(torch.from_numpy(bits.view(np.int64)))
+            s_scale[:n].copy_(torch.from_numpy(scale))
+            graph.replay()
+            idx = torch.from_numpy(legal).to(self.device).long()
+            compact = logits[:n].gather(1, idx).float()
+            return (np.ascontiguousarray(compact.cpu().numpy()),
+                    np.ascontiguousarray(values[:n].cpu().numpy().astype(np.float32)))
+
+        forward.packed = True
+        return forward
+
+
+def _drive_all(pools: list, forward, until: list[int | None]) -> list[PoolTiming]:
+    timings = [PoolTiming() for _ in pools]
+    # A forward with per-pool state (CUDA graphs) hands each pool its own.
+    per_pool = getattr(forward, "for_pool", None)
+    forwards = [per_pool(k) if per_pool else forward for k in range(len(pools))]
+    if len(pools) == 1:
+        _drive(pools[0], forwards[0], timings[0], until[0])
+        return timings
+    errors: list[BaseException] = []
+
+    def target(k: int) -> None:
+        try:
+            _drive(pools[k], forwards[k], timings[k], until[k])
+        except BaseException as e:  # surfaced on the main thread below
+            errors.append(e)
+
+    threads = [threading.Thread(target=target, args=(k,), name=f"pool{k}")
+               for k in range(len(pools))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    if errors:
+        raise errors[0]
+    return timings
+
+
 def run(pools: list, forward) -> list[PoolResult]:
     """Drive every pool to completion, one thread per pool when there are several."""
-    timings = [PoolTiming() for _ in pools]
-    if len(pools) == 1:
-        _drive(pools[0], forward, timings[0])
-    else:
-        errors: list[BaseException] = []
-
-        def target(k: int) -> None:
-            try:
-                _drive(pools[k], forward, timings[k])
-            except BaseException as e:  # surfaced on the main thread below
-                errors.append(e)
-
-        threads = [threading.Thread(target=target, args=(k,), name=f"pool{k}")
-                   for k in range(len(pools))]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-        if errors:
-            raise errors[0]
+    timings = _drive_all(pools, forward, [None] * len(pools))
     return [PoolResult(sp.take_training_data(), dict(sp.stats()), tm)
             for sp, tm in zip(pools, timings)]
+
+
+# Games per slot in streaming mode: in effect, never run out.
+_ENDLESS = 1 << 40
+_COUNTS = ("games", "white_wins", "black_wins", "draws", "truncated", "evaluations")
+
+
+class Stream:
+    """Self-play that never drains between generations.
+
+    A drained generation starts every game together and ends when the last one
+    does, so its tail runs at a shrinking batch: on a 3090 at 1024 slots the
+    mean batch was 423. Here the slots run forever. `generation(n)` drives
+    until at least `n` more games have finished and returns those games;
+    games still in flight carry over, and the next call continues them --
+    under whatever weights the network has by then.
+
+    That last point is the one semantic change from the drained loop: a game
+    straddling a training step is played partly by the previous network. Lc0
+    and KataGo self-play the same way.
+    """
+
+    def __init__(self, *, pools: int, concurrency: int, seed: int, **kw):
+        if pools < 1 or pools > concurrency:
+            raise ValueError("need 1 <= pools <= concurrency")
+        self.pools = [
+            cc.ChessSelfPlay(concurrency=c, total_games=c * _ENDLESS,
+                             seed=seed + k * SEED_STRIDE, **kw)
+            for k, c in enumerate(split(concurrency, pools))
+        ]
+        self._seen = [dict(sp.stats()) for sp in self.pools]
+
+    def generation(self, games: int, forward) -> tuple[tuple, dict, list[PoolTiming]]:
+        """At least `games` newly finished games (split across pools), merged."""
+        until = [sp.games_completed + g
+                 for sp, g in zip(self.pools, split(games, len(self.pools)))]
+        timings = _drive_all(self.pools, forward, until)
+        results = []
+        for k, (sp, tm) in enumerate(zip(self.pools, timings)):
+            now = dict(sp.stats())
+            before = self._seen[k]
+            delta = {key: now[key] - before[key] for key in _COUNTS}
+            plies = now["mean_plies"] * now["games"] - before["mean_plies"] * before["games"]
+            delta["mean_plies"] = plies / delta["games"] if delta["games"] else 0.0
+            self._seen[k] = now
+            results.append(PoolResult(sp.take_training_data(), delta, tm))
+        data, stats = merge(results)
+        return data, stats, timings
 
 
 def merge(results: list[PoolResult]) -> tuple[tuple, dict]:

@@ -50,12 +50,22 @@ def pick_device(requested: str) -> str:
     return "cpu"
 
 
-def selfplay_generation(net, device: str, args, seed: int, infer=None):
+def selfplay_generation(net, device: str, args, seed: int, infer=None, stream=None,
+                        graph_forward=None):
     """`infer` is the handle used for forward passes -- a compiled wrapper when
     one is available, otherwise `net` itself. Both share parameters, so weights
-    updated by training are seen here without any copying."""
+    updated by training are seen here without any copying.
+
+    With a `pipeline.Stream`, games are not drained: this returns the next
+    `args.games` games to finish and leaves the rest in flight."""
     net.eval()
     infer = infer if infer is not None else net
+    if stream is not None:
+        forward = graph_forward or pipeline.make_forward(
+            infer, device, bucket=args.batch_bucket,
+            cap=-(-args.concurrency // args.pools), packed=args.bridge == "packed")
+        (obs, policy, z, mask, pmask), stats, _ = stream.generation(args.games, forward)
+        return (obs.astype(np.float16), policy.astype(np.float16), z, mask, pmask), stats
     pools = pipeline.make_pools(
         pools=args.pools,
         concurrency=args.concurrency,
@@ -135,6 +145,11 @@ def main() -> None:
                          "measured against rather than assumed worse")
     ap.add_argument("--games", type=int, default=256)
     ap.add_argument("--concurrency", type=int, default=256)
+    ap.add_argument("--graphs", action="store_true",
+                    help="self-play forward as CUDA graphs (needs --stream, --bridge packed)")
+    ap.add_argument("--stream", action="store_true",
+                    help="never drain self-play between generations: unfinished "
+                         "games carry over (keeps batches full; see pipeline.Stream)")
     ap.add_argument("--bridge", choices=["dense", "packed"], default="dense",
                     help="packed: bit-packed planes up, legal-move logits down")
     ap.add_argument("--pools", type=int, default=1,
@@ -270,6 +285,24 @@ def main() -> None:
     print("-" * len(header))
 
     last_eval = {}
+    graph_forward = None
+    if args.graphs:
+        if not (args.stream and args.bridge == "packed" and device.startswith("cuda")):
+            raise SystemExit("--graphs needs --stream, --bridge packed and a CUDA device")
+        # Captured once: training updates the weights in place, and the graphs
+        # read them by address, so they always see the current network.
+        net.eval()
+        graph_forward = pipeline.GraphForward(
+            infer, device, bucket=args.batch_bucket,
+            cap=-(-args.concurrency // args.pools), amp=None, pools=args.pools)
+    stream = None
+    if args.stream:
+        stream = pipeline.Stream(
+            pools=args.pools, concurrency=args.concurrency, seed=7000,
+            sims=args.sims, max_considered=args.considered, max_plies=args.max_plies,
+            pcr_prob=args.pcr_prob, fast_sims=args.fast_sims,
+            fast_considered=args.fast_considered, threads=args.driver_threads,
+        )
     for gen in range(args.generations):
         if args.max_hours is not None and (time.time() - t0) / 3600 >= args.max_hours:
             print(f"\nwall-clock budget of {args.max_hours}h reached at generation {gen}")
@@ -277,7 +310,8 @@ def main() -> None:
         gen_start = time.time()
 
         (obs, pol, z, vmask, pmask), stats = selfplay_generation(
-            net, device, args, seed=7000 + gen, infer=infer
+            net, device, args, seed=7000 + gen, infer=infer, stream=stream,
+            graph_forward=graph_forward,
         )
         buffer.append((obs, pol, z, vmask, pmask))
         losses_ = train_steps(net, opt, buffer, args, device)

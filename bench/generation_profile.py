@@ -98,6 +98,8 @@ def profile_selfplay(net, device: str, args) -> dict:
     `total` and `samples` are then the only numbers that compare across N.
     """
     net.eval()
+    if args.stream:
+        return profile_stream(net, device, args)
     pools = pipeline.make_pools(
         pools=args.pools,
         concurrency=args.concurrency,
@@ -108,7 +110,7 @@ def profile_selfplay(net, device: str, args) -> dict:
         max_plies=args.max_plies,
         threads=args.driver_threads,
     )
-    forward = pipeline.make_forward(net, device, amp=args.amp, packed=args.bridge == "packed")
+    forward = make_profile_forward(net, device, args)
     t0 = time.perf_counter()
     results = pipeline.run(pools, forward)
     total = time.perf_counter() - t0
@@ -116,6 +118,50 @@ def profile_selfplay(net, device: str, args) -> dict:
     t_gpu = sum(r.timing.gpu for r in results)
     t_driver = sum(r.timing.driver for r in results)
     evals = sum(r.timing.evals for r in results)
+    return {
+        "total": total,
+        "gpu": t_gpu,
+        "driver": t_driver,
+        "other": max(total - t_gpu - t_driver, 0.0),
+        "evals": evals,
+        "pos_per_sec": evals / t_gpu if t_gpu else 0.0,
+        "samples": len(obs),
+    }
+
+
+def make_profile_forward(net, device: str, args):
+    if args.graphs:
+        if args.bridge != "packed":
+            raise SystemExit("--graphs needs --bridge packed")
+        return pipeline.GraphForward(net, device, bucket=args.bucket,
+                                     cap=-(-args.concurrency // args.pools),
+                                     amp=args.amp, pools=args.pools)
+    return pipeline.make_forward(net, device, amp=args.amp, packed=args.bridge == "packed")
+
+
+def profile_stream(net, device: str, args) -> dict:
+    """Steady-state self-play: one warm-up generation, then one measured.
+
+    The warm-up fills the pipeline -- every slot mid-game, game lengths
+    spread out -- which is the state a streaming run lives in. Only the
+    second generation is reported.
+    """
+    stream = pipeline.Stream(
+        pools=args.pools, concurrency=args.concurrency, seed=12345,
+        sims=args.sims, max_considered=args.considered, max_plies=args.max_plies,
+        threads=args.driver_threads,
+    )
+    forward = make_profile_forward(net, device, args)
+    stream.generation(args.games, forward)
+    t0 = time.perf_counter()
+    (obs, *_), _stats, timings = stream.generation(args.games, forward)
+    total = time.perf_counter() - t0
+    t_gpu = sum(t.gpu for t in timings)
+    t_driver = sum(t.driver for t in timings)
+    evals = sum(t.evals for t in timings)
+    batches = sum(t.batches for t in timings)
+    print(f"steady state: mean batch {evals / max(batches, 1):,.0f} per pool call, "
+          f"{evals / total:,.0f} evals per wall second")
     return {
         "total": total,
         "gpu": t_gpu,
@@ -216,6 +262,12 @@ def main() -> None:
     ap.add_argument("--games", type=int, default=64,
                     help="fewer than a real generation; the split is what matters")
     ap.add_argument("--concurrency", type=int, default=256)
+    ap.add_argument("--stream", action="store_true",
+                    help="measure steady-state streaming self-play (warm-up generation first)")
+    ap.add_argument("--graphs", action="store_true",
+                    help="CUDA graphs per bucket size (needs --bridge packed)")
+    ap.add_argument("--bucket", type=int, default=64,
+                    help="pad batches to a multiple of this for --graphs")
     ap.add_argument("--bridge", choices=["dense", "packed"], default="dense",
                     help="packed: bit-packed planes up, legal-move logits down")
     ap.add_argument("--pools", type=int, default=1,
