@@ -1,0 +1,16 @@
+[package]
+name = "az-metal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Native Metal (MPSGraph) inference for the chess network; macOS only, prototype"
+
+# Everything Apple-specific is behind a target cfg, so on Linux this crate
+# compiles to the weight-file reader and a binary that says it needs macOS.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSDictionary", "NSValue", "NSData", "NSString", "NSObject"] }
+objc2-metal = { version = "0.3.2", default-features = false, features = ["std", "MTLDevice", "MTLBuffer", "MTLResource", "MTLCommandQueue", "MTLAllocation"] }
+objc2-metal-performance-shaders = { version = "0.3.2", default-features = false, features = ["std", "MPSCoreTypes"] }
+objc2-metal-performance-shaders-graph = "0.3.2"
+half = "2"

@@ -5,6 +5,8 @@ members = [
     "crates/az-perft",
     "crates/az-py",
     "crates/az-wasm",
+    # Native Metal inference, a prototype. Compiles to a stub off macOS.
+    "crates/az-metal",
 ]
 # az-wasm only makes sense for wasm32; building a host cdylib of it on every
 # `cargo build` is pure waste. It stays a member so it shares the lockfile.
