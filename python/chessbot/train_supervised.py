@@ -87,6 +87,8 @@ def main(argv=None):
     ap.add_argument("--buffer", type=int, default=500_000)
     ap.add_argument("--eval-every", type=int, default=1000)
     ap.add_argument("--save-every", type=int, default=5000)
+    ap.add_argument("--rescan-minutes", type=float, default=0,
+                    help="re-scan --data this often and train on shards that appeared since")
     ap.add_argument("--compile", action="store_true")
     ap.add_argument("--bf16", action="store_true", help="autocast the forward to bfloat16")
     ap.add_argument("--device", default="auto")
@@ -134,6 +136,8 @@ def main(argv=None):
     log = open(out / "log.jsonl", "a")
     t0 = time.time()
     seen = 0
+    val_paths = {s.path for s in val}
+    last_scan = time.time()
     run = {"policy": 0.0, "value": 0.0, "n": 0}
     for step in range(1, a.steps + 1):
         b = sampler.batch(a.batch)
@@ -149,6 +153,12 @@ def main(argv=None):
         run["policy"] += pl.item()
         run["value"] += vl.item()
         run["n"] += 1
+
+        if a.rescan_minutes and time.time() - last_scan > 60 * a.rescan_minutes:
+            last_scan = time.time()
+            found = [s for s in gamestore.open_shards(a.data) if s.path not in val_paths]
+            if (k := sampler.add_shards(found)):
+                print(f"step={step} added {k} shards, now {len(sampler.shards)}", flush=True)
 
         hours = (time.time() - t0) / 3600
         last = step == a.steps or (a.max_hours is not None and hours >= a.max_hours)

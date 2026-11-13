@@ -128,13 +128,26 @@ class Sampler:
         self.p = np.zeros((capacity, width), np.float16)
         self.wdl = np.zeros((capacity, 3), np.float16)
         self.swdl = np.zeros((capacity, 3), np.float16)
-        weights = np.array([s.games for s in shards], np.float64)
-        self.shard_p = weights / weights.sum()
+        self._reweight()
         self.filled = 0
         self.truncated = 0
         self.replayed = 0
         while self.filled < capacity:
             self._add_game(fill=True)
+
+    def _reweight(self) -> None:
+        weights = np.array([s.games for s in self.shards], np.float64)
+        self.shard_p = weights / weights.sum()
+
+    def add_shards(self, shards: list[Shard]) -> int:
+        """Take on shards that appeared since the sampler was built (e.g. a
+        conversion running alongside training). Returns how many were new."""
+        known = {s.path for s in self.shards}
+        new = [s for s in shards if s.path not in known]
+        if new:
+            self.shards = self.shards + new
+            self._reweight()
+        return len(new)
 
     def _add_game(self, fill: bool = False) -> int:
         s = self.shards[self.rng.choice(len(self.shards), p=self.shard_p)]

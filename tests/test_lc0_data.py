@@ -112,3 +112,17 @@ def test_shard_round_trip_and_sampler(tmp_path):
     np.testing.assert_allclose(b["p"].sum(1), 1.0, atol=1e-2)
     np.testing.assert_allclose(b["wdl"].sum(1), 1.0, atol=1e-3)
     assert b["bits"].shape == (64, core.OBS_PLANES)
+
+
+def test_sampler_takes_on_new_shards(tmp_path):
+    rng = random.Random(5)
+    tables = lc0_data.Tables()
+    for k in range(2):
+        games = [lc0_data.convert_game(_random_game(rng)[0], tables) for _ in range(3)]
+        gamestore.write_shard(str(tmp_path / f"s{k}"), games)
+    first = gamestore.open_shards([str(tmp_path / "s0")])
+    sampler = gamestore.Sampler(first, capacity=128, seed=0)
+    assert sampler.add_shards(gamestore.open_shards([str(tmp_path)])) == 1
+    assert sampler.add_shards(gamestore.open_shards([str(tmp_path)])) == 0
+    assert len(sampler.shards) == 2 and abs(sampler.shard_p.sum() - 1) < 1e-9
+    sampler.batch(256)  # draws from both without error
