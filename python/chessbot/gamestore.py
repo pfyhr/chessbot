@@ -89,17 +89,25 @@ class Shard:
         return str(self.fens[g]), played, lo, hi
 
 
-def open_shards(roots: list[str]) -> list[Shard]:
+def open_shards(roots: list[str], skip: set[str] | frozenset = frozenset(),
+                allow_empty: bool = False) -> list[Shard]:
+    """Open every shard under `roots`, except paths in `skip`.
+
+    Each shard holds one file descriptor per memory-mapped field (Python's mmap
+    keeps a dup of the fd), so a rescan must not re-open what is already open.
+    """
     out = []
     for root in roots:
         if os.path.exists(os.path.join(root, "game_off.npy")):
-            out.append(Shard(root))
+            if root not in skip:
+                out.append(Shard(root))
             continue
         for name in sorted(os.listdir(root)):
             p = os.path.join(root, name)
-            if not name.endswith(".tmp") and os.path.exists(os.path.join(p, "game_off.npy")):
+            if (p not in skip and not name.endswith(".tmp")
+                    and os.path.exists(os.path.join(p, "game_off.npy"))):
                 out.append(Shard(p))
-    if not out:
+    if not out and not allow_empty:
         raise FileNotFoundError(f"no shards under {roots}")
     return out
 

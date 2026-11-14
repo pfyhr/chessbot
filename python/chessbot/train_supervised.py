@@ -156,7 +156,8 @@ def main(argv=None):
 
         if a.rescan_minutes and time.time() - last_scan > 60 * a.rescan_minutes:
             last_scan = time.time()
-            found = [s for s in gamestore.open_shards(a.data) if s.path not in val_paths]
+            known = val_paths | {s.path for s in sampler.shards}
+            found = gamestore.open_shards(a.data, skip=known, allow_empty=True)
             if (k := sampler.add_shards(found)):
                 print(f"step={step} added {k} shards, now {len(sampler.shards)}", flush=True)
 

@@ -126,3 +126,5 @@ def test_sampler_takes_on_new_shards(tmp_path):
     assert sampler.add_shards(gamestore.open_shards([str(tmp_path)])) == 0
     assert len(sampler.shards) == 2 and abs(sampler.shard_p.sum() - 1) < 1e-9
     sampler.batch(256)  # draws from both without error
+    known = {s.path for s in sampler.shards}
+    assert gamestore.open_shards([str(tmp_path)], skip=known, allow_empty=True) == []
