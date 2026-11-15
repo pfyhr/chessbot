@@ -34,9 +34,12 @@ class WorkerBatches:
             p.start()
 
     def batch(self) -> dict:
+        return gamestore.widen(self.batch_raw())
+
+    def batch_raw(self) -> dict:
         while True:
             try:
-                return gamestore.widen(self.q.get(timeout=60))
+                return self.q.get(timeout=60)
             except queue.Empty:
                 dead = [p.exitcode for p in self.procs if not p.is_alive()]
                 if dead:

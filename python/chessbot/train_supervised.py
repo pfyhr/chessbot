@@ -36,6 +36,7 @@ import os
 import time
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -53,8 +54,25 @@ def sparse_losses(policy_logits, wdl_logits, idx, p, wdl_target):
     return policy, value
 
 
+_DEVICE_DTYPES = {"bits": torch.int64, "scale": torch.float32, "idx": torch.int64,
+                  "p": torch.float32, "wdl": torch.float32, "search_wdl": torch.float32}
+
+
 def to_device(b: dict, device: str, value_mix: float):
-    t = {k: torch.from_numpy(v).to(device, non_blocking=True) for k, v in b.items()}
+    """Batch (storage or widened dtypes) -> device tensors.
+
+    Storage dtypes are half the bytes, and widening them is the GPU's job: on
+    the CPU it was most of the main process's time. uint16 policy indices go
+    up as int16 (all < 4672) and uint64 masks as int64 (same bits).
+    """
+    t = {}
+    for k, dt in _DEVICE_DTYPES.items():
+        v = b[k]
+        if v.dtype == np.uint64:
+            v = v.view(np.int64)
+        elif v.dtype == np.uint16:
+            v = v.view(np.int16)
+        t[k] = torch.from_numpy(v).to(device, non_blocking=True).to(dt)
     x = unpack_obs(t["bits"], t["scale"], core.OBS_SHAPE)
     wdl = (1 - value_mix) * t["wdl"] + value_mix * t["search_wdl"]
     p = t["p"] / t["p"].sum(1, keepdim=True).clamp(min=1e-6)
@@ -221,15 +239,15 @@ def main(argv=None):
     wb = None
     if a.data:
         sampler = gamestore.Sampler(train, capacity=a.buffer, seed=a.seed)
-        next_batch = lambda: sampler.batch(a.batch)
+        next_batch = lambda: sampler.batch_raw(a.batch)
     elif a.workers:
         from chessbot.batch_workers import WorkerBatches
         wb = WorkerBatches(a.stream, a.workers, a.batch, a.buffer, window=a.window, seed=a.seed + step)
-        next_batch = wb.batch
+        next_batch = wb.batch_raw
     else:
         sampler = gamestore.StreamSampler(a.stream, window=a.window, capacity=a.buffer,
                                           seed=a.seed + step)
-        next_batch = lambda: sampler.batch(a.batch)
+        next_batch = lambda: sampler.batch_raw(a.batch)
     val_sampler = gamestore.Sampler(val, capacity=min(a.buffer, 50_000), seed=a.seed + 1)
     val_batches = [val_sampler.batch(1024) for _ in range(8)]
     print(f"buffers filled in {time.time() - t0:.0f}s", flush=True)
@@ -254,6 +272,7 @@ def main(argv=None):
     main_end = branch_at[-1] if branch_at else None
     t0 = time.time()
     seen0 = seen
+    rate_t, rate_seen = time.time(), seen  # speed since the last eval row
     lr = a.lr
     val_paths = {s.path for s in val}
     last_scan = time.time()
@@ -281,8 +300,9 @@ def main(argv=None):
                 lr = a.lr * min(1.0, (step + 1) / a.warmup) * 0.5 * (
                     1 + math.cos(math.pi * min(step, a.steps) / a.steps))
             pl, vl = train_step(fwd, opt, amp, x, idx, p, wdl, lr)
-            run["policy"] += pl.item()
-            run["value"] += vl.item()
+            # Accumulate on the device: .item() here would sync every step.
+            run["policy"] += pl.detach()
+            run["value"] += vl.detach()
             run["n"] += 1
         for br in branches:
             train_step(br.fwd, br.opt, amp, x, idx, p, wdl,
@@ -311,12 +331,13 @@ def main(argv=None):
         if main_live and step % a.eval_every == 0:
             ev = evaluate(net, val_batches, device, a.value_mix)
             write_row(dict(kind="main", step=step, positions=seen, hours=round(hours, 4), lr=lr,
-                           train_policy=run["policy"] / max(1, run["n"]),
-                           train_value=run["value"] / max(1, run["n"]),
+                           train_policy=float(run["policy"]) / max(1, run["n"]),
+                           train_value=float(run["value"]) / max(1, run["n"]),
                            val_policy=ev["policy"], val_value=ev["value"], val_top1=ev["top1"],
-                           pos_per_s=(seen - seen0) / (time.time() - t0),
+                           pos_per_s=(seen - rate_seen) / (time.time() - rate_t),
                            branches=len(branches)))
             run = {"policy": 0.0, "value": 0.0, "n": 0}
+            rate_t, rate_seen = time.time(), seen
         if step % a.save_every == 0:
             meta.update(step=step, positions=seen)
             if main_live:
