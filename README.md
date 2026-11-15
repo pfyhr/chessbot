@@ -329,3 +329,7 @@ The short version: cozy-chess is up to 2.6x faster at bulk move *enumeration*, b
 is 3–22% faster on the make-move path, and make-move is what MCTS actually does.
 
 `perft(6)` from startpos: 119,060,324 nodes in 1.90s, single-threaded.
+
+## Thanks
+
+Thanks to [sskoog](https://github.com/sskoog) for lending us training time on aida.
