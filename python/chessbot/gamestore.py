@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -157,9 +159,12 @@ class Sampler:
             self._reweight()
         return len(new)
 
-    def _add_game(self, fill: bool = False) -> int:
+    def _pick(self) -> tuple[Shard, int]:
         s = self.shards[self.rng.choice(len(self.shards), p=self.shard_p)]
-        g = int(self.rng.integers(s.games))
+        return s, int(self.rng.integers(s.games))
+
+    def _add_game(self, fill: bool = False) -> int:
+        s, g = self._pick()
         fen, played, lo, hi = s.game(g)
         bits, scale = core.replay_packed(fen, played)
         n = hi - lo
@@ -192,17 +197,115 @@ class Sampler:
         self.replayed += n
         return n
 
-    def batch(self, n: int) -> dict[str, np.ndarray]:
+    def batch_raw(self, n: int) -> dict[str, np.ndarray]:
+        """A batch in the storage dtypes: half the bytes to ship between processes."""
         rows = self.rng.integers(self.cap, size=n)
         out = {
-            "bits": self.bits[rows].view(np.int64),
-            "scale": self.scale[rows],
-            "idx": self.idx[rows].astype(np.int64),
-            "p": self.p[rows].astype(np.float32),
-            "wdl": self.wdl[rows].astype(np.float32),
-            "search_wdl": self.swdl[rows].astype(np.float32),
+            "bits": self.bits[rows], "scale": self.scale[rows], "idx": self.idx[rows],
+            "p": self.p[rows], "wdl": self.wdl[rows], "search_wdl": self.swdl[rows],
         }
         added = 0
         while added < n:
             added += self._add_game()
         return out
+
+    def batch(self, n: int) -> dict[str, np.ndarray]:
+        return widen(self.batch_raw(n))
+
+
+def widen(raw: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """Storage dtypes -> the dtypes the trainer moves to the device."""
+    return {
+        "bits": raw["bits"].view(np.int64),
+        "scale": raw["scale"],
+        "idx": raw["idx"].astype(np.int64),
+        "p": raw["p"].astype(np.float32),
+        "wdl": raw["wdl"].astype(np.float32),
+        "search_wdl": raw["search_wdl"].astype(np.float32),
+    }
+
+
+class StreamSampler(Sampler):
+    """One pass over a growing, ordered list of shards.
+
+    `stream_dir/order.txt` names shard directories (relative to stream_dir), one
+    per line, in the order to read them; something else (a relay) may append to
+    it and copy shards in while training runs. Each game is drawn exactly once:
+    a window of `window` shards is open at a time, games are taken from a
+    random permutation of each, and a shard that runs out is closed and its
+    name appended to `consumed-<part>.txt`, so the relay can delete it.
+
+    `part=(k, n)` takes every n-th line starting at k, so n worker processes
+    read disjoint data. Shards already listed in a consumed file are skipped,
+    which is what makes a restart resume rather than repeat.
+    """
+
+    def __init__(self, stream_dir: str, window: int = 4, capacity: int = 500_000,
+                 width: int = 128, seed: int = 0, part: tuple[int, int] = (0, 1),
+                 poll: float = 10.0):
+        self.dir, self.window_n, self.part, self.poll = stream_dir, window, part, poll
+        self.win: list[list] = []          # [shard, permutation, cursor]
+        self.order: list[str] = []
+        self.next_line = 0
+        self.consumed_path = os.path.join(stream_dir, f"consumed-{part[0]}.txt")
+        self.done = set()
+        for name in os.listdir(stream_dir):
+            if name.startswith("consumed-"):
+                self.done |= set(open(os.path.join(stream_dir, name)).read().split())
+        self.games_read = 0
+        self.stalled_s = 0.0
+        super().__init__([], capacity=capacity, width=width, seed=seed + 7919 * part[0])
+
+    def _reweight(self) -> None:
+        pass
+
+    def _reread_order(self) -> None:
+        path = os.path.join(self.dir, "order.txt")
+        if os.path.exists(path):
+            self.order = open(path).read().split()
+
+    def _open_next(self) -> bool:
+        k, n = self.part
+        while True:
+            if self.next_line >= len(self.order):
+                self._reread_order()
+                if self.next_line >= len(self.order):
+                    return False
+            i = self.next_line
+            self.next_line += 1
+            name = self.order[i]
+            if i % n != k or name in self.done:
+                continue
+            path = os.path.join(self.dir, name)
+            if not os.path.exists(os.path.join(path, "game_off.npy")):
+                # Listed before it finished copying: come back to this line later.
+                self.next_line = i
+                return False
+            shard = Shard(path)
+            self.win.append([shard, self.rng.permutation(shard.games), 0])
+            return True
+
+    def _pick(self) -> tuple[Shard, int]:
+        while len(self.win) < self.window_n and self._open_next():
+            pass
+        while not self.win:
+            t = time.time()
+            time.sleep(self.poll)
+            self.stalled_s += time.time() - t
+            print(f"stream part {self.part}: waiting for shards ({self.stalled_s:.0f}s so far)",
+                  file=sys.stderr, flush=True)
+            while len(self.win) < self.window_n and self._open_next():
+                pass
+        left = np.array([len(w[1]) - w[2] for w in self.win], np.float64)
+        i = int(self.rng.choice(len(self.win), p=left / left.sum()))
+        w = self.win[i]
+        g = int(w[1][w[2]])
+        w[2] += 1
+        self.games_read += 1
+        if w[2] == len(w[1]):
+            self.win.pop(i)
+            name = os.path.relpath(w[0].path, self.dir)
+            self.done.add(name)
+            with open(self.consumed_path, "a") as f:
+                f.write(name + "\n")
+        return w[0], g
